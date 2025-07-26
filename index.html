@@ -332,12 +332,23 @@
                         return;
                     }
 
-                    // 3. Fetch details for the found customers
-                    const customerData = await apiFetch('/v2/customers/bulk-retrieve', {
-                        method: 'POST',
-                        body: JSON.stringify({ customer_ids: customerIds })
-                    });
-                    setResults(customerData.customers || []);
+                    // 3. Fetch details for the found customers, handling the 100-limit.
+                    const chunkSize = 100;
+                    const customerIdChunks = [];
+                    for (let i = 0; i < customerIds.length; i += chunkSize) {
+                        customerIdChunks.push(customerIds.slice(i, i + chunkSize));
+                    }
+
+                    const promises = customerIdChunks.map(chunk =>
+                        apiFetch('/v2/customers/bulk-retrieve', {
+                            method: 'POST',
+                            body: JSON.stringify({ customer_ids: chunk })
+                        })
+                    );
+
+                    const resultsData = await Promise.all(promises);
+                    const allCustomersFromReport = resultsData.flatMap(result => result.customers || []);
+                    setResults(allCustomersFromReport);
 
                 } catch (err) {
                     setError(err.message);
