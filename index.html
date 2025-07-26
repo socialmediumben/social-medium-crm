@@ -37,6 +37,7 @@
             const [customers, setCustomers] = useState([]); // This will be the filtered list
             const [groupsMap, setGroupsMap] = useState(new Map());
             const [segmentsMap, setSegmentsMap] = useState(new Map());
+            const [locationId, setLocationId] = useState(null);
             
             // Selected customer state
             const [selectedCustomer, setSelectedCustomer] = useState(null);
@@ -66,15 +67,16 @@
                 if (squareAccessToken) {
                     const fetchInitialData = async () => {
                         setIsLoading(true);
-                        setLoadingMessage('Fetching all customers...');
+                        setLoadingMessage('Fetching initial data...');
                         setError('');
                         
                         try {
-                            // Fetch customers, groups, and segments in parallel
-                            const [_, groupsData, segmentsData] = await Promise.all([
+                            // Fetch customers, groups, segments, and location in parallel
+                            const [_, groupsData, segmentsData, locationData] = await Promise.all([
                                 fetchAllCustomers(),
                                 apiFetch('/v2/customers/groups'),
-                                apiFetch('/v2/customers/segments')
+                                apiFetch('/v2/customers/segments'),
+                                apiFetch('/v2/locations')
                             ]);
 
                             if (groupsData.groups) {
@@ -82,6 +84,12 @@
                             }
                             if (segmentsData.segments) {
                                 setSegmentsMap(new Map(segmentsData.segments.map(s => [s.id, s.name])));
+                            }
+                            const activeLocation = locationData.locations?.find(loc => loc.status === 'ACTIVE');
+                            if (activeLocation) {
+                                setLocationId(activeLocation.id);
+                            } else {
+                                throw new Error("No active location found for this business.");
                             }
 
                         } catch (err) {
@@ -93,6 +101,7 @@
                     };
                     
                     const fetchAllCustomers = async () => {
+                        setLoadingMessage('Fetching all customers...');
                         let fetchedCustomers = [];
                         let cursor = undefined;
                         do {
@@ -144,13 +153,19 @@
 
                 // Fetch full details for the selected customer
                 const fetchDetails = async () => {
+                    if (!locationId) {
+                        setError("Location ID is not set. Cannot fetch orders.");
+                        setIsLoading(false);
+                        return;
+                    }
+
                     try {
                         const [customerData, ordersData] = await Promise.all([
                             apiFetch(`/v2/customers/${customer.id}`),
                             apiFetch('/v2/orders/search', {
                                 method: 'POST',
                                 body: JSON.stringify({
-                                    location_ids: [], // Search all locations
+                                    location_ids: [locationId], // Use the fetched location ID
                                     query: {
                                         filter: { customer_filter: { customer_ids: [customer.id] } },
                                         sort: { sort_field: "CLOSED_AT", sort_order: "DESC" }
