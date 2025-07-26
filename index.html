@@ -291,8 +291,33 @@
         }
         
         function ReportsPage({ allCustomers, groupsMap, segmentsMap, onSelectCustomer, onBack }) {
-            const [filters, setFilters] = useState({ name: '', email: '', phone: '', since: '', groups: '' });
-            const [sortConfig, setSortConfig] = useState({ key: 'name', direction: 'ascending' });
+            const ALL_COLUMNS = [
+                { key: 'given_name', label: 'First Name', visible: true, path: ['given_name'] },
+                { key: 'family_name', label: 'Last Name', visible: true, path: ['family_name'] },
+                { key: 'email_address', label: 'Email', visible: true, path: ['email_address'] },
+                { key: 'phone_number', label: 'Phone', visible: true, path: ['phone_number'] },
+                { key: 'company_name', label: 'Company', visible: false, path: ['company_name'] },
+                { key: 'address_1', label: 'Address 1', visible: false, path: ['address', 'address_line_1'] },
+                { key: 'address_2', label: 'Address 2', visible: false, path: ['address', 'address_line_2'] },
+                { key: 'city', label: 'City', visible: false, path: ['address', 'locality'] },
+                { key: 'state', label: 'State', visible: false, path: ['address', 'administrative_district_level_1'] },
+                { key: 'postal_code', label: 'Postal Code', visible: false, path: ['address', 'postal_code'] },
+                { key: 'reference_id', label: 'Reference ID', visible: false, path: ['reference_id'] },
+                { key: 'birthday', label: 'Birthday', visible: false, path: ['birthday'] },
+                { key: 'email_subscription_status', label: 'Email Subscription', visible: false, path: ['email_subscription_status'] },
+                { key: 'nickname', label: 'Nickname', visible: false, path: ['nickname'] },
+                { key: 'created_at', label: 'Customer Since', visible: true, path: ['created_at'] },
+                { key: 'groups', label: 'Groups', visible: true, path: [] }, // Special case
+            ];
+
+            const [columns, setColumns] = useState(ALL_COLUMNS);
+            const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+            const [filters, setFilters] = useState({});
+            const [sortConfig, setSortConfig] = useState({ key: 'given_name', direction: 'ascending' });
+            
+            const visibleColumns = useMemo(() => columns.filter(c => c.visible), [columns]);
+
+            const getNestedValue = (obj, path) => path.reduce((acc, part) => acc && acc[part], obj);
 
             const filteredAndSortedCustomers = useMemo(() => {
                 let sortableItems = [...allCustomers];
@@ -300,8 +325,8 @@
                 // Sorting
                 if (sortConfig.key !== null) {
                     sortableItems.sort((a, b) => {
-                        const aVal = a[sortConfig.key] || '';
-                        const bVal = b[sortConfig.key] || '';
+                        const aVal = sortConfig.key === 'groups' ? '' : getNestedValue(a, columns.find(c => c.key === sortConfig.key).path) || '';
+                        const bVal = sortConfig.key === 'groups' ? '' : getNestedValue(b, columns.find(c => c.key === sortConfig.key).path) || '';
                         if (aVal < bVal) return sortConfig.direction === 'ascending' ? -1 : 1;
                         if (aVal > bVal) return sortConfig.direction === 'ascending' ? 1 : -1;
                         return 0;
@@ -310,42 +335,37 @@
 
                 // Filtering
                 return sortableItems.filter(customer => {
-                    const fullName = `${customer.given_name || ''} ${customer.family_name || ''}`.toLowerCase();
-                    const customerGroups = [...(customer.group_ids || []).map(id => groupsMap.get(id) || ''), ...(customer.segment_ids || []).map(id => segmentsMap.get(id) || '')].join(' ').toLowerCase();
+                    return visibleColumns.every(col => {
+                        const filterValue = (filters[col.key] || '').toLowerCase();
+                        if (!filterValue) return true;
 
-                    return (
-                        fullName.includes(filters.name.toLowerCase()) &&
-                        (customer.email_address || '').toLowerCase().includes(filters.email.toLowerCase()) &&
-                        (customer.phone_number || '').includes(filters.phone) &&
-                        (customer.created_at || '').toLowerCase().includes(filters.since.toLowerCase()) &&
-                        customerGroups.includes(filters.groups.toLowerCase())
-                    );
+                        if (col.key === 'groups') {
+                            const customerGroups = [...(customer.group_ids || []).map(id => groupsMap.get(id) || ''), ...(customer.segment_ids || []).map(id => segmentsMap.get(id) || '')].join(' ').toLowerCase();
+                            return customerGroups.includes(filterValue);
+                        } else {
+                            const customerValue = (getNestedValue(customer, col.path) || '').toString().toLowerCase();
+                            return customerValue.includes(filterValue);
+                        }
+                    });
                 });
-            }, [allCustomers, filters, sortConfig]);
+            }, [allCustomers, filters, sortConfig, columns]);
             
             const requestSort = (key) => {
                 let direction = 'ascending';
-                if (sortConfig.key === key && sortConfig.direction === 'ascending') {
-                    direction = 'descending';
-                }
+                if (sortConfig.key === key && sortConfig.direction === 'ascending') direction = 'descending';
                 setSortConfig({ key, direction });
             };
             
-            const handleFilterChange = (e, key) => {
-                setFilters(prev => ({ ...prev, [key]: e.target.value }));
-            };
+            const handleFilterChange = (e, key) => setFilters(prev => ({ ...prev, [key]: e.target.value }));
+            const handleColumnToggle = (key) => setColumns(prev => prev.map(c => c.key === key ? { ...c, visible: !c.visible } : c));
+            const formatDate = (dateString) => dateString ? new Date(dateString).toLocaleDateString() : 'N/A';
             
-            const formatDate = (dateString) => {
-                if (!dateString) return 'N/A';
-                return new Date(dateString).toLocaleDateString();
-            };
-            
-            const SortableHeader = ({ children, name }) => {
-                const isSorted = sortConfig.key === name;
+            const SortableHeader = ({ col }) => {
+                const isSorted = sortConfig.key === col.key;
                 return (
                     <th scope="col" className="px-6 py-3">
-                        <button onClick={() => requestSort(name)} className="flex items-center uppercase">
-                            {children}
+                        <button onClick={() => requestSort(col.key)} className="flex items-center uppercase">
+                            {col.label}
                             {isSorted ? (sortConfig.direction === 'ascending' ? ' ▲' : ' ▼') : null}
                         </button>
                     </th>
@@ -354,7 +374,24 @@
 
             return (
                 <div>
-                    <button onClick={onBack} className="mb-6 text-cyan-600 hover:text-cyan-800"> &larr; Back to Dashboard</button>
+                    <div className="flex justify-between items-center mb-6">
+                        <button onClick={onBack} className="text-cyan-600 hover:text-cyan-800"> &larr; Back to Dashboard</button>
+                        <div className="relative">
+                            <button onClick={() => setIsDropdownOpen(prev => !prev)} className="px-4 py-2 bg-white border rounded-md shadow-sm">Columns</button>
+                            {isDropdownOpen && (
+                                <div className="absolute right-0 mt-2 w-56 bg-white rounded-md shadow-lg z-10">
+                                    <div className="py-1">
+                                        {columns.map(col => (
+                                            <label key={col.key} className="flex items-center px-4 py-2 text-sm text-gray-700">
+                                                <input type="checkbox" checked={col.visible} onChange={() => handleColumnToggle(col.key)} className="mr-2"/>
+                                                {col.label}
+                                            </label>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    </div>
                     <h2 className="text-4xl font-bold text-gray-800">Customer Report</h2>
                     <p className="text-gray-500">A complete list of all customers in your directory.</p>
 
@@ -362,37 +399,36 @@
                         <table className="w-full text-sm text-left text-gray-500">
                             <thead className="text-xs text-gray-700 uppercase bg-gray-50">
                                 <tr>
-                                    <SortableHeader name="given_name">Name</SortableHeader>
-                                    <SortableHeader name="email_address">Email</SortableHeader>
-                                    <SortableHeader name="phone_number">Phone Number</SortableHeader>
-                                    <SortableHeader name="created_at">Customer Since</SortableHeader>
-                                    <th scope="col" className="px-6 py-3">Groups</th>
+                                    {visibleColumns.map(col => <SortableHeader key={col.key} col={col} />)}
                                 </tr>
-                                 <tr className="bg-gray-50">
-                                    <th className="p-2"><input type="text" placeholder="Filter..." onChange={e => handleFilterChange(e, 'name')} className="w-full px-2 py-1 border rounded-md text-xs"/></th>
-                                    <th className="p-2"><input type="text" placeholder="Filter..." onChange={e => handleFilterChange(e, 'email')} className="w-full px-2 py-1 border rounded-md text-xs"/></th>
-                                    <th className="p-2"><input type="text" placeholder="Filter..." onChange={e => handleFilterChange(e, 'phone')} className="w-full px-2 py-1 border rounded-md text-xs"/></th>
-                                    <th className="p-2"><input type="text" placeholder="Filter..." onChange={e => handleFilterChange(e, 'since')} className="w-full px-2 py-1 border rounded-md text-xs"/></th>
-                                    <th className="p-2"><input type="text" placeholder="Filter..." onChange={e => handleFilterChange(e, 'groups')} className="w-full px-2 py-1 border rounded-md text-xs"/></th>
+                                <tr className="bg-gray-50">
+                                    {visibleColumns.map(col => (
+                                        <th key={col.key} className="p-2">
+                                            <input type="text" placeholder="Filter..." onChange={e => handleFilterChange(e, col.key)} className="w-full px-2 py-1 border rounded-md text-xs"/>
+                                        </th>
+                                    ))}
                                 </tr>
                             </thead>
                             <tbody>
                                 {filteredAndSortedCustomers.map(customer => (
                                     <tr key={customer.id} className="bg-white border-b hover:bg-gray-50">
-                                        <th scope="row" className="px-6 py-4 font-medium text-gray-900 whitespace-nowrap">
-                                            <button onClick={() => onSelectCustomer(customer)} className="text-cyan-600 hover:underline">
-                                                {customer.given_name} {customer.family_name}
-                                            </button>
-                                        </th>
-                                        <td className="px-6 py-4">{customer.email_address || 'N/A'}</td>
-                                        <td className="px-6 py-4">{customer.phone_number || 'N/A'}</td>
-                                        <td className="px-6 py-4">{formatDate(customer.created_at)}</td>
-                                        <td className="px-6 py-4">
-                                            <div className="flex flex-wrap gap-1">
-                                                {(customer.group_ids || []).map(id => <Pill key={id} text={groupsMap.get(id) || '...'} />)}
-                                                {(customer.segment_ids || []).map(id => <Pill key={id} text={segmentsMap.get(id) || '...'} color="bg-green-100 text-green-800" />)}
-                                            </div>
-                                        </td>
+                                        {visibleColumns.map(col => (
+                                            <td key={col.key} className="px-6 py-4">
+                                                {col.key === 'given_name' ? (
+                                                    <button onClick={() => onSelectCustomer(customer)} className="text-cyan-600 hover:underline font-medium whitespace-nowrap">
+                                                        {customer.given_name} {customer.family_name}
+                                                    </button>
+                                                ) : col.key === 'groups' ? (
+                                                    <div className="flex flex-wrap gap-1">
+                                                        {[...(customer.group_ids || []).map(id => groupsMap.get(id) || '...'), ...(customer.segment_ids || []).map(id => segmentsMap.get(id) || '...')].map((name, i) => <Pill key={i} text={name} />)}
+                                                    </div>
+                                                ) : col.key === 'created_at' ? (
+                                                    formatDate(getNestedValue(customer, col.path))
+                                                ) : (
+                                                    getNestedValue(customer, col.path) || 'N/A'
+                                                )}
+                                            </td>
+                                        ))}
                                     </tr>
                                 ))}
                             </tbody>
