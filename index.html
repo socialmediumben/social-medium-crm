@@ -192,7 +192,7 @@
                     case 'profile':
                         return customerDetails ? <CustomerProfile customer={customerDetails} groupsMap={groupsMap} segmentsMap={segmentsMap} /> : null;
                     case 'reports':
-                        return <ReportsPage apiFetch={apiFetch} locationId={locationId} onSelectCustomer={handleSelectCustomer} onBack={() => setCurrentView('dashboard')} />;
+                        return <ReportsPage allCustomers={allCustomers} groupsMap={groupsMap} segmentsMap={segmentsMap} onSelectCustomer={handleSelectCustomer} onBack={() => setCurrentView('dashboard')} />;
                     case 'dashboard':
                     default:
                         return <Dashboard onNavigate={setCurrentView} />;
@@ -283,112 +283,57 @@
                     <div className="mt-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                         <button onClick={() => onNavigate('reports')} className="p-6 bg-white rounded-lg shadow hover:bg-cyan-50 text-left transition">
                             <h3 className="text-xl font-semibold text-gray-800">Reports</h3>
-                            <p className="text-gray-500 mt-2">Filter customers by purchase history and activity.</p>
+                            <p className="text-gray-500 mt-2">View and filter your entire customer list.</p>
                         </button>
                     </div>
                 </div>
             );
         }
         
-        function ReportsPage({ apiFetch, locationId, onSelectCustomer, onBack }) {
-            const [isLoading, setIsLoading] = useState(false);
-            const [error, setError] = useState('');
-            const [itemName, setItemName] = useState('');
-            const [results, setResults] = useState([]);
-
-            const handleRunReport = async (e) => {
-                e.preventDefault();
-                if (!itemName) return;
-                setIsLoading(true);
-                setError('');
-                setResults([]);
-                try {
-                    // 1. Find the item ID from its name
-                    const itemSearchData = await apiFetch('/v2/catalog/search', {
-                        method: 'POST',
-                        body: JSON.stringify({ object_types: ["ITEM"], query: { text_query: { keywords: [itemName] } } })
-                    });
-                    const item = itemSearchData.objects?.find(obj => obj.item_data.name.toLowerCase() === itemName.toLowerCase());
-                    if (!item) throw new Error(`Item "${itemName}" not found in catalog.`);
-                    const variationIds = item.item_data.variations.map(v => v.id);
-
-                    // 2. Search for orders containing that item
-                    const orderSearchData = await apiFetch('/v2/orders/search', {
-                        method: 'POST',
-                        body: JSON.stringify({
-                            location_ids: [locationId],
-                            query: {
-                                filter: {
-                                    state_filter: { states: ["COMPLETED"] },
-                                    line_item_filter: { catalog_object_ids: variationIds }
-                                }
-                            }
-                        })
-                    });
-                    
-                    const customerIds = [...new Set(orderSearchData.orders?.map(o => o.customer_id).filter(Boolean))];
-                    if (customerIds.length === 0) {
-                        setResults([]);
-                        return;
-                    }
-
-                    // 3. Fetch details for the found customers, handling the 100-limit.
-                    const chunkSize = 100;
-                    const customerIdChunks = [];
-                    for (let i = 0; i < customerIds.length; i += chunkSize) {
-                        customerIdChunks.push(customerIds.slice(i, i + chunkSize));
-                    }
-
-                    const promises = customerIdChunks.map(chunk =>
-                        apiFetch('/v2/customers/bulk-retrieve', {
-                            method: 'POST',
-                            body: JSON.stringify({ customer_ids: chunk })
-                        })
-                    );
-
-                    const resultsData = await Promise.all(promises);
-                    const allCustomersFromReport = resultsData.flatMap(result => result.customers || []);
-                    setResults(allCustomersFromReport);
-
-                } catch (err) {
-                    setError(err.message);
-                } finally {
-                    setIsLoading(false);
-                }
+        function ReportsPage({ allCustomers, groupsMap, segmentsMap, onSelectCustomer, onBack }) {
+            const formatDate = (dateString) => {
+                if (!dateString) return 'N/A';
+                return new Date(dateString).toLocaleDateString();
             };
-            
+
             return (
                 <div>
                     <button onClick={onBack} className="mb-6 text-cyan-600 hover:text-cyan-800"> &larr; Back to Dashboard</button>
-                    <h2 className="text-4xl font-bold text-gray-800">Reports</h2>
-                    <p className="text-gray-500">Find customers based on what they've purchased.</p>
+                    <h2 className="text-4xl font-bold text-gray-800">Customer Report</h2>
+                    <p className="text-gray-500">A complete list of all customers in your directory.</p>
 
-                    <form onSubmit={handleRunReport} className="mt-8 p-6 bg-white rounded-lg shadow">
-                        <label className="block text-sm font-medium text-gray-700">Item Name</label>
-                        <div className="mt-1 flex space-x-3">
-                            <input type="text" value={itemName} onChange={e => setItemName(e.target.value)} className="flex-grow block w-full px-4 py-2 border rounded-md" placeholder="e.g., Day Pass" />
-                            <button type="submit" className="px-6 py-2 text-white bg-cyan-600 rounded-md hover:bg-cyan-700" disabled={isLoading}>
-                                {isLoading ? <div className="spinner"></div> : 'Run Report'}
-                            </button>
-                        </div>
-                    </form>
-                    
-                    {error && <div className="mt-4 text-red-500">{error}</div>}
-
-                    <div className="mt-8">
-                        <h3 className="text-2xl font-bold text-gray-800">Results ({results.length})</h3>
-                        <div className="mt-4 bg-white rounded-lg shadow overflow-hidden">
-                            <ul className="divide-y divide-gray-200">
-                                {results.map(customer => (
-                                    <li key={customer.id}>
-                                        <button onClick={() => onSelectCustomer(customer)} className="w-full text-left p-4 hover:bg-gray-50">
-                                            <p className="font-semibold text-gray-800">{customer.given_name} {customer.family_name}</p>
-                                            <p className="text-sm text-gray-500">{customer.email_address}</p>
-                                        </button>
-                                    </li>
+                    <div className="mt-8 bg-white rounded-lg shadow overflow-x-auto">
+                        <table className="w-full text-sm text-left text-gray-500">
+                            <thead className="text-xs text-gray-700 uppercase bg-gray-50">
+                                <tr>
+                                    <th scope="col" className="px-6 py-3">Name</th>
+                                    <th scope="col" className="px-6 py-3">Email</th>
+                                    <th scope="col" className="px-6 py-3">Phone Number</th>
+                                    <th scope="col" className="px-6 py-3">Customer Since</th>
+                                    <th scope="col" className="px-6 py-3">Groups</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {allCustomers.map(customer => (
+                                    <tr key={customer.id} className="bg-white border-b hover:bg-gray-50">
+                                        <th scope="row" className="px-6 py-4 font-medium text-gray-900 whitespace-nowrap">
+                                            <button onClick={() => onSelectCustomer(customer)} className="text-cyan-600 hover:underline">
+                                                {customer.given_name} {customer.family_name}
+                                            </button>
+                                        </th>
+                                        <td className="px-6 py-4">{customer.email_address || 'N/A'}</td>
+                                        <td className="px-6 py-4">{customer.phone_number || 'N/A'}</td>
+                                        <td className="px-6 py-4">{formatDate(customer.created_at)}</td>
+                                        <td className="px-6 py-4">
+                                            <div className="flex flex-wrap gap-1">
+                                                {(customer.group_ids || []).map(id => <Pill key={id} text={groupsMap.get(id) || '...'} />)}
+                                                {(customer.segment_ids || []).map(id => <Pill key={id} text={segmentsMap.get(id) || '...'} color="bg-green-100 text-green-800" />)}
+                                            </div>
+                                        </td>
+                                    </tr>
                                 ))}
-                            </ul>
-                        </div>
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             );
