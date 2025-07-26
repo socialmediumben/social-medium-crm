@@ -37,6 +37,7 @@
             const [customers, setCustomers] = useState([]); // This will be the filtered list
             const [groupsMap, setGroupsMap] = useState(new Map());
             const [segmentsMap, setSegmentsMap] = useState(new Map());
+            const [customAttrDefs, setCustomAttrDefs] = useState(new Map());
             const [locationId, setLocationId] = useState(null);
             
             // View management
@@ -50,41 +51,37 @@
             const apiFetch = async (endpoint, options = {}) => {
                 const response = await fetch(`${API_PROXY_URL}/api${endpoint}`, {
                     ...options,
-                    headers: {
-                        ...options.headers,
-                        'x-square-access-token': squareAccessToken,
-                        'Content-Type': 'application/json',
-                    },
+                    headers: { ...options.headers, 'x-square-access-token': squareAccessToken, 'Content-Type': 'application/json' },
                 });
                 const data = await response.json();
-                if (!response.ok) {
-                    throw new Error(data.errors?.[0]?.detail || data.error || 'An API error occurred.');
-                }
+                if (!response.ok) throw new Error(data.errors?.[0]?.detail || data.error || 'An API error occurred.');
                 return data;
             };
 
-            // Effect to fetch initial data once the token is set
             useEffect(() => {
                 if (squareAccessToken) {
                     const fetchInitialData = async () => {
                         setIsLoading(true);
                         setLoadingMessage('Fetching initial data...');
                         setError('');
-                        
                         try {
-                            const [_, groupsData, segmentsData, locationData] = await Promise.all([
-                                fetchAllCustomers(),
+                            const [groupsData, segmentsData, locationData, customAttrData] = await Promise.all([
                                 apiFetch('/v2/customers/groups'),
                                 apiFetch('/v2/customers/segments'),
-                                apiFetch('/v2/locations')
+                                apiFetch('/v2/locations'),
+                                apiFetch('/v2/customers/custom-attribute-definitions')
                             ]);
 
                             if (groupsData.groups) setGroupsMap(new Map(groupsData.groups.map(g => [g.id, g.name])));
                             if (segmentsData.segments) setSegmentsMap(new Map(segmentsData.segments.map(s => [s.id, s.name])));
-                            
+                            if (customAttrData.custom_attribute_definitions) {
+                                setCustomAttrDefs(new Map(customAttrData.custom_attribute_definitions.map(def => [def.key, def])));
+                            }
                             const activeLocation = locationData.locations?.find(loc => loc.status === 'ACTIVE');
                             if (activeLocation) setLocationId(activeLocation.id);
                             else throw new Error("No active location found for this business.");
+                            
+                            await fetchAllCustomers(customAttrData.custom_attribute_definitions);
 
                         } catch (err) {
                             setError(err.message);
@@ -94,21 +91,43 @@
                         }
                     };
                     
-                    const fetchAllCustomers = async () => {
+                    const fetchAllCustomers = async (definitions) => {
                         setLoadingMessage('Fetching all customers...');
                         let fetchedCustomers = [];
                         let cursor = undefined;
                         do {
                             const data = await apiFetch('/v2/customers/search', {
                                 method: 'POST',
-                                body: JSON.stringify({
-                                    query: { sort: { field: "CREATED_AT", order: "DESC" } },
-                                    cursor: cursor
-                                })
+                                body: JSON.stringify({ query: { sort: { field: "CREATED_AT", order: "DESC" } }, cursor: cursor })
                             });
-                            if (data.customers) fetchedCustomers = [...fetchedCustomers, ...data.customers];
+                            if (data.customers) fetchedCustomers.push(...data.customers);
                             cursor = data.cursor;
                         } while (cursor);
+                        
+                        // Special handling to fetch "Kids Names" for the report table
+                        const kidsNamesDef = definitions?.find(def => def.name.toLowerCase() === 'kids names');
+                        if (kidsNamesDef && fetchedCustomers.length > 0) {
+                            setLoadingMessage('Fetching custom fields...');
+                            const customerIds = fetchedCustomers.map(c => c.id);
+                            const chunkSize = 30; // Bulk endpoint is limited
+                            let allAttributes = [];
+                            for (let i = 0; i < customerIds.length; i += chunkSize) {
+                                const chunk = customerIds.slice(i, i + chunkSize);
+                                const attrData = await apiFetch('/v2/customers/bulk-retrieve', {
+                                    method: 'POST',
+                                    body: JSON.stringify({ customer_ids: chunk })
+                                });
+                                if(attrData.customers) {
+                                   fetchedCustomers.forEach(c => {
+                                       const customerWithAttr = attrData.customers[c.id];
+                                       if(customerWithAttr && customerWithAttr.custom_attributes) {
+                                           c.custom_attributes = customerWithAttr.custom_attributes;
+                                       }
+                                   })
+                                }
+                            }
+                        }
+
                         fetchedCustomers.sort((a, b) => (a.given_name || '').localeCompare(b.given_name || ''));
                         setAllCustomers(fetchedCustomers);
                         setCustomers(fetchedCustomers);
@@ -190,9 +209,9 @@
 
                 switch(currentView) {
                     case 'profile':
-                        return customerDetails ? <CustomerProfile customer={customerDetails} groupsMap={groupsMap} segmentsMap={segmentsMap} /> : null;
+                        return customerDetails ? <CustomerProfile customer={customerDetails} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} /> : null;
                     case 'reports':
-                        return <ReportsPage allCustomers={allCustomers} groupsMap={groupsMap} segmentsMap={segmentsMap} onSelectCustomer={handleSelectCustomer} onBack={() => setCurrentView('dashboard')} />;
+                        return <ReportsPage allCustomers={allCustomers} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} onSelectCustomer={handleSelectCustomer} onBack={() => setCurrentView('dashboard')} />;
                     case 'dashboard':
                     default:
                         return <Dashboard onNavigate={setCurrentView} />;
@@ -290,55 +309,52 @@
             );
         }
         
-        function ReportsPage({ allCustomers, groupsMap, segmentsMap, onSelectCustomer, onBack }) {
-            const ALL_COLUMNS = [
-                { key: 'given_name', label: 'First Name', visible: true, path: ['given_name'] },
-                { key: 'family_name', label: 'Last Name', visible: true, path: ['family_name'] },
-                { key: 'email_address', label: 'Email', visible: true, path: ['email_address'] },
-                { key: 'phone_number', label: 'Phone', visible: true, path: ['phone_number'] },
-                { key: 'company_name', label: 'Company', visible: false, path: ['company_name'] },
-                { key: 'address_1', label: 'Address 1', visible: false, path: ['address', 'address_line_1'] },
-                { key: 'address_2', label: 'Address 2', visible: false, path: ['address', 'address_line_2'] },
-                { key: 'city', label: 'City', visible: false, path: ['address', 'locality'] },
-                { key: 'state', label: 'State', visible: false, path: ['address', 'administrative_district_level_1'] },
-                { key: 'postal_code', label: 'Postal Code', visible: false, path: ['address', 'postal_code'] },
-                { key: 'reference_id', label: 'Reference ID', visible: false, path: ['reference_id'] },
-                { key: 'birthday', label: 'Birthday', visible: false, path: ['birthday'] },
-                { key: 'email_subscription_status', label: 'Email Subscription', visible: false, path: ['email_subscription_status'] },
-                { key: 'nickname', label: 'Nickname', visible: false, path: ['nickname'] },
-                { key: 'created_at', label: 'Customer Since', visible: true, path: ['created_at'] },
-                { key: 'groups', label: 'Groups', visible: true, path: [] }, // Special case
-            ];
+        function ReportsPage({ allCustomers, groupsMap, segmentsMap, customAttrDefs, onSelectCustomer, onBack }) {
+            const getInitialColumns = () => {
+                const standardColumns = [
+                    { key: 'given_name', label: 'First Name', visible: true, path: ['given_name'] },
+                    { key: 'family_name', label: 'Last Name', visible: true, path: ['family_name'] },
+                    { key: 'email_address', label: 'Email', visible: true, path: ['email_address'] },
+                    { key: 'phone_number', label: 'Phone', visible: true, path: ['phone_number'] },
+                    { key: 'company_name', label: 'Company', visible: false, path: ['company_name'] },
+                    { key: 'address_1', label: 'Address 1', visible: false, path: ['address', 'address_line_1'] },
+                    { key: 'city', label: 'City', visible: false, path: ['address', 'locality'] },
+                    { key: 'birthday', label: 'Birthday', visible: false, path: ['birthday'] },
+                    { key: 'created_at', label: 'Customer Since', visible: true, path: ['created_at'] },
+                    { key: 'groups', label: 'Groups', visible: true, path: [] },
+                ];
+                
+                const kidsNamesDef = Array.from(customAttrDefs.values()).find(def => def.name.toLowerCase() === 'kids names');
+                if (kidsNamesDef) {
+                    standardColumns.push({ key: kidsNamesDef.key, label: 'Kids Names', visible: true, path: ['custom_attributes', kidsNamesDef.key, 'value'] });
+                }
+                return standardColumns;
+            };
 
-            const [columns, setColumns] = useState(ALL_COLUMNS);
+            const [columns, setColumns] = useState(getInitialColumns);
             const [isDropdownOpen, setIsDropdownOpen] = useState(false);
             const [filters, setFilters] = useState({});
             const [sortConfig, setSortConfig] = useState({ key: 'given_name', direction: 'ascending' });
             
             const visibleColumns = useMemo(() => columns.filter(c => c.visible), [columns]);
-
             const getNestedValue = (obj, path) => path.reduce((acc, part) => acc && acc[part], obj);
 
             const filteredAndSortedCustomers = useMemo(() => {
                 let sortableItems = [...allCustomers];
-
-                // Sorting
                 if (sortConfig.key !== null) {
                     sortableItems.sort((a, b) => {
-                        const aVal = sortConfig.key === 'groups' ? '' : getNestedValue(a, columns.find(c => c.key === sortConfig.key).path) || '';
-                        const bVal = sortConfig.key === 'groups' ? '' : getNestedValue(b, columns.find(c => c.key === sortConfig.key).path) || '';
+                        const col = columns.find(c => c.key === sortConfig.key);
+                        const aVal = col.key === 'groups' ? '' : getNestedValue(a, col.path) || '';
+                        const bVal = col.key === 'groups' ? '' : getNestedValue(b, col.path) || '';
                         if (aVal < bVal) return sortConfig.direction === 'ascending' ? -1 : 1;
                         if (aVal > bVal) return sortConfig.direction === 'ascending' ? 1 : -1;
                         return 0;
                     });
                 }
-
-                // Filtering
                 return sortableItems.filter(customer => {
                     return visibleColumns.every(col => {
                         const filterValue = (filters[col.key] || '').toLowerCase();
                         if (!filterValue) return true;
-
                         if (col.key === 'groups') {
                             const customerGroups = [...(customer.group_ids || []).map(id => groupsMap.get(id) || ''), ...(customer.segment_ids || []).map(id => segmentsMap.get(id) || '')].join(' ').toLowerCase();
                             return customerGroups.includes(filterValue);
@@ -398,35 +414,18 @@
                     <div className="mt-8 bg-white rounded-lg shadow overflow-x-auto">
                         <table className="w-full text-sm text-left text-gray-500">
                             <thead className="text-xs text-gray-700 uppercase bg-gray-50">
-                                <tr>
-                                    {visibleColumns.map(col => <SortableHeader key={col.key} col={col} />)}
-                                </tr>
-                                <tr className="bg-gray-50">
-                                    {visibleColumns.map(col => (
-                                        <th key={col.key} className="p-2">
-                                            <input type="text" placeholder="Filter..." onChange={e => handleFilterChange(e, col.key)} className="w-full px-2 py-1 border rounded-md text-xs"/>
-                                        </th>
-                                    ))}
-                                </tr>
+                                <tr>{visibleColumns.map(col => <SortableHeader key={col.key} col={col} />)}</tr>
+                                <tr className="bg-gray-50">{visibleColumns.map(col => (<th key={col.key} className="p-2"><input type="text" placeholder="Filter..." onChange={e => handleFilterChange(e, col.key)} className="w-full px-2 py-1 border rounded-md text-xs"/></th>))}</tr>
                             </thead>
                             <tbody>
                                 {filteredAndSortedCustomers.map(customer => (
                                     <tr key={customer.id} className="bg-white border-b hover:bg-gray-50">
                                         {visibleColumns.map(col => (
                                             <td key={col.key} className="px-6 py-4">
-                                                {col.key === 'given_name' ? (
-                                                    <button onClick={() => onSelectCustomer(customer)} className="text-cyan-600 hover:underline font-medium whitespace-nowrap">
-                                                        {customer.given_name} {customer.family_name}
-                                                    </button>
-                                                ) : col.key === 'groups' ? (
-                                                    <div className="flex flex-wrap gap-1">
-                                                        {[...(customer.group_ids || []).map(id => groupsMap.get(id) || '...'), ...(customer.segment_ids || []).map(id => segmentsMap.get(id) || '...')].map((name, i) => <Pill key={i} text={name} />)}
-                                                    </div>
-                                                ) : col.key === 'created_at' ? (
-                                                    formatDate(getNestedValue(customer, col.path))
-                                                ) : (
-                                                    getNestedValue(customer, col.path) || 'N/A'
-                                                )}
+                                                {col.key === 'given_name' ? (<button onClick={() => onSelectCustomer(customer)} className="text-cyan-600 hover:underline font-medium whitespace-nowrap">{customer.given_name} {customer.family_name}</button>) 
+                                                : col.key === 'groups' ? (<div className="flex flex-wrap gap-1">{[...(customer.group_ids || []).map(id => groupsMap.get(id) || '...'), ...(customer.segment_ids || []).map(id => segmentsMap.get(id) || '...')].map((name, i) => <Pill key={i} text={name} />)}</div>) 
+                                                : col.path.includes('created_at') ? (formatDate(getNestedValue(customer, col.path))) 
+                                                : (getNestedValue(customer, col.path) || 'N/A')}
                                             </td>
                                         ))}
                                     </tr>
@@ -438,7 +437,7 @@
             );
         }
 
-        function CustomerProfile({ customer, groupsMap, segmentsMap }) {
+        function CustomerProfile({ customer, groupsMap, segmentsMap, customAttrDefs }) {
             const formatDate = (dateString) => {
                 if (!dateString) return 'N/A';
                 return new Date(dateString).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: 'numeric' });
@@ -458,6 +457,12 @@
                         <InfoCard title="Stats"><InfoItem label="Last Visit" value={customer.last_visit ? formatDate(customer.last_visit) : 'No visits found'} /><InfoItem label="Source" value={customer.creation_source} /></InfoCard>
                         <InfoCard title="Details" className="md:col-span-2 lg:col-span-1"><InfoItem label="Birthday" value={customer.birthday} /><InfoItem label="Company" value={customer.company_name} /><InfoItem label="Reference ID" value={customer.reference_id} /></InfoCard>
                         <InfoCard title="Groups & Segments" className="md:col-span-3"><div className="flex flex-wrap gap-2">{(customer.group_ids || []).map(id => <Pill key={id} text={groupsMap.get(id) || id} />)}{(customer.segment_ids || []).map(id => <Pill key={id} text={segmentsMap.get(id) || id} color="bg-green-100 text-green-800" />)}</div></InfoCard>
+                        <InfoCard title="Custom Fields" className="md:col-span-3">
+                            {Array.from(customAttrDefs.values()).map(def => {
+                                const attr = customer.custom_attributes?.[def.key];
+                                return attr ? <InfoItem key={def.key} label={def.name} value={attr.value} /> : null;
+                            })}
+                        </InfoCard>
                         <InfoCard title="Notes" className="md:col-span-3"><p className="text-gray-700 whitespace-pre-wrap">{customer.note || 'No notes for this customer.'}</p></InfoCard>
                     </div>
                 </div>
