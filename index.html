@@ -29,8 +29,10 @@
         function App() {
             const [squareAccessToken, setSquareAccessToken] = useState(null);
             const [isLoading, setIsLoading] = useState(false);
+            const [loadingMessage, setLoadingMessage] = useState('');
             const [error, setError] = useState('');
-            const [customers, setCustomers] = useState([]);
+            const [allCustomers, setAllCustomers] = useState([]);
+            const [customers, setCustomers] = useState([]); // This will be the filtered list
             const [selectedCustomer, setSelectedCustomer] = useState(null);
 
             const API_PROXY_URL = 'https://square-checkin-backend.onrender.com';
@@ -51,55 +53,78 @@
                 return data;
             };
 
-            const handleSearch = async (searchTerm) => {
+            // Effect to fetch all customers once the token is set
+            useEffect(() => {
+                if (squareAccessToken) {
+                    const fetchAllCustomers = async () => {
+                        setIsLoading(true);
+                        setLoadingMessage('Fetching all customers...');
+                        setError('');
+                        let fetchedCustomers = [];
+                        let cursor = undefined;
+
+                        try {
+                            do {
+                                const data = await apiFetch('/v2/customers/search', {
+                                    method: 'POST',
+                                    body: JSON.stringify({
+                                        query: { sort: { field: "CREATED_AT", order: "DESC" } },
+                                        cursor: cursor
+                                    })
+                                });
+                                if (data.customers) {
+                                    fetchedCustomers = [...fetchedCustomers, ...data.customers];
+                                }
+                                cursor = data.cursor;
+                            } while (cursor);
+
+                            fetchedCustomers.sort((a, b) => (a.given_name || '').localeCompare(b.given_name || ''));
+                            
+                            setAllCustomers(fetchedCustomers);
+                            setCustomers(fetchedCustomers);
+
+                        } catch (err) {
+                            setError(err.message);
+                        } finally {
+                            setIsLoading(false);
+                            setLoadingMessage('');
+                        }
+                    };
+
+                    fetchAllCustomers();
+                }
+            }, [squareAccessToken]);
+
+            const handleSearch = (searchTerm) => {
+                setSelectedCustomer(null);
                 if (!searchTerm) {
-                    setCustomers([]);
+                    setCustomers(allCustomers);
                     return;
                 }
-                setIsLoading(true);
-                setError('');
-                setSelectedCustomer(null);
-                try {
-                    const data = await apiFetch('/v2/customers/search', {
-                        method: 'POST',
-                        body: JSON.stringify({
-                            query: {
-                                sort: {
-                                    field: "CREATED_AT",
-                                    order: "DESC"
-                                },
-                                filter: {
-                                    // A general search term for name, email, phone
-                                }
-                            }
-                        })
-                    });
-                    // The customer search API doesn't have a general search term, so we'll filter client-side for this demo
-                    const lowercasedTerm = searchTerm.toLowerCase();
-                    const filteredCustomers = (data.customers || []).filter(c => 
-                        (c.given_name && c.given_name.toLowerCase().includes(lowercasedTerm)) ||
-                        (c.family_name && c.family_name.toLowerCase().includes(lowercasedTerm)) ||
-                        (c.email_address && c.email_address.toLowerCase().includes(lowercasedTerm)) ||
-                        (c.phone_number && c.phone_number.includes(searchTerm))
-                    );
-                    setCustomers(filteredCustomers);
-                } catch (err) {
-                    setError(err.message);
-                } finally {
-                    setIsLoading(false);
-                }
+                
+                const lowercasedTerm = searchTerm.toLowerCase();
+                const filtered = allCustomers.filter(c => 
+                    (c.given_name && c.given_name.toLowerCase().includes(lowercasedTerm)) ||
+                    (c.family_name && c.family_name.toLowerCase().includes(lowercasedTerm)) ||
+                    (c.email_address && c.email_address.toLowerCase().includes(lowercasedTerm)) ||
+                    (c.phone_number && c.phone_number.includes(searchTerm))
+                );
+                setCustomers(filtered);
             };
             
             const handleSelectCustomer = (customer) => {
                 setIsLoading(true);
+                setLoadingMessage('Fetching details...');
                 setError('');
-                // Fetch full customer details
                 apiFetch(`/v2/customers/${customer.id}`)
                     .then(data => {
                         setSelectedCustomer(data.customer);
                     })
                     .catch(err => setError(err.message))
-                    .finally(() => setIsLoading(false));
+                    .finally(() => {
+                        setIsLoading(false);
+                        setLoadingMessage('');
+                    });
             };
 
             if (!squareAccessToken) {
@@ -113,18 +138,25 @@
                         <div className="p-4 border-b">
                             <h1 className="text-xl font-bold text-gray-800">Customer Search</h1>
                         </div>
-                        <SearchBar onSearch={handleSearch} isLoading={isLoading} />
-                        <CustomerList customers={customers} onSelectCustomer={handleSelectCustomer} selectedCustomerId={selectedCustomer?.id} />
+                        <SearchBar onSearch={handleSearch} />
+                        {isLoading && allCustomers.length === 0 ? (
+                            <div className="p-4 text-center text-gray-500 flex flex-col items-center justify-center h-full">
+                                <div className="spinner"></div>
+                                <p className="mt-2">{loadingMessage}</p>
+                            </div>
+                        ) : (
+                            <CustomerList customers={customers} onSelectCustomer={handleSelectCustomer} selectedCustomerId={selectedCustomer?.id} />
+                        )}
                     </div>
 
                     {/* Main Content */}
                     <div className="flex-1 p-8 overflow-y-auto">
-                        {isLoading && !selectedCustomer && <div className="flex justify-center items-center h-full"><div className="spinner"></div></div>}
+                        {isLoading && selectedCustomer && <div className="flex justify-center items-center h-full"><div className="spinner"></div><p className="ml-2">{loadingMessage}</p></div>}
                         {error && <div className="text-red-500 text-center">{error}</div>}
                         {!isLoading && selectedCustomer && <CustomerProfile customer={selectedCustomer} />}
                         {!isLoading && !selectedCustomer && (
                             <div className="flex items-center justify-center h-full text-gray-500">
-                                <p>Search for a customer to see their details.</p>
+                                <p>Select a customer to see their details.</p>
                             </div>
                         )}
                     </div>
@@ -158,30 +190,30 @@
             );
         }
 
-        function SearchBar({ onSearch, isLoading }) {
+        function SearchBar({ onSearch }) {
             const [term, setTerm] = useState('');
             
-            const handleSubmit = (e) => {
-                e.preventDefault();
-                onSearch(term);
+            const handleChange = (e) => {
+                setTerm(e.target.value);
+                onSearch(e.target.value);
             };
 
             return (
-                <form onSubmit={handleSubmit} className="p-4 border-b">
+                <div className="p-4 border-b">
                     <input
                         type="text"
                         value={term}
-                        onChange={(e) => setTerm(e.target.value)}
-                        placeholder="Search by name, email, or phone..."
+                        onChange={handleChange}
+                        placeholder="Filter by name, email, or phone..."
                         className="w-full px-4 py-2 border rounded-md"
                     />
-                </form>
+                </div>
             );
         }
 
         function CustomerList({ customers, onSelectCustomer, selectedCustomerId }) {
             if (customers.length === 0) {
-                return <div className="p-4 text-center text-gray-500">No customers found.</div>;
+                return <div className="p-4 text-center text-gray-500">No customers match your search.</div>;
             }
             return (
                 <ul className="overflow-y-auto">
@@ -192,7 +224,7 @@
                                 className={`w-full text-left p-4 hover:bg-cyan-50 ${selectedCustomerId === customer.id ? 'bg-cyan-100' : ''}`}
                             >
                                 <p className="font-semibold text-gray-800">{customer.given_name} {customer.family_name}</p>
-                                <p className="text-sm text-gray-500">{customer.email_address}</p>
+                                <p className="text-sm text-gray-500">{customer.email_address || 'No email'}</p>
                             </button>
                         </li>
                     ))}
