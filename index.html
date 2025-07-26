@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Social Medium CRM</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- React and Babel for in-browser JSX transformation -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; }
+        #root { height: 100vh; }
+        /* Simple spinner for loading states */
+        .spinner { border: 2px solid rgba(0, 0, 0, 0.1); width: 20px; height: 20px; border-radius: 50%; border-left-color: #06b6d4; animation: spin 1s ease infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body class="bg-gray-100">
+
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        // --- Main App Component ---
+        function App() {
+            const [squareAccessToken, setSquareAccessToken] = useState(null);
+            const [isLoading, setIsLoading] = useState(false);
+            const [error, setError] = useState('');
+            const [customers, setCustomers] = useState([]);
+            const [selectedCustomer, setSelectedCustomer] = useState(null);
+
+            const API_PROXY_URL = 'https://square-checkin-backend.onrender.com';
+
+            const apiFetch = async (endpoint, options = {}) => {
+                const response = await fetch(`${API_PROXY_URL}/api${endpoint}`, {
+                    ...options,
+                    headers: {
+                        ...options.headers,
+                        'x-square-access-token': squareAccessToken,
+                        'Content-Type': 'application/json',
+                    },
+                });
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.errors?.[0]?.detail || data.error || 'An API error occurred.');
+                }
+                return data;
+            };
+
+            const handleSearch = async (searchTerm) => {
+                if (!searchTerm) {
+                    setCustomers([]);
+                    return;
+                }
+                setIsLoading(true);
+                setError('');
+                setSelectedCustomer(null);
+                try {
+                    const data = await apiFetch('/v2/customers/search', {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            query: {
+                                sort: {
+                                    field: "CREATED_AT",
+                                    order: "DESC"
+                                },
+                                filter: {
+                                    // A general search term for name, email, phone
+                                }
+                            }
+                        })
+                    });
+                    // The customer search API doesn't have a general search term, so we'll filter client-side for this demo
+                    const lowercasedTerm = searchTerm.toLowerCase();
+                    const filteredCustomers = (data.customers || []).filter(c => 
+                        (c.given_name && c.given_name.toLowerCase().includes(lowercasedTerm)) ||
+                        (c.family_name && c.family_name.toLowerCase().includes(lowercasedTerm)) ||
+                        (c.email_address && c.email_address.toLowerCase().includes(lowercasedTerm)) ||
+                        (c.phone_number && c.phone_number.includes(searchTerm))
+                    );
+                    setCustomers(filteredCustomers);
+                } catch (err) {
+                    setError(err.message);
+                } finally {
+                    setIsLoading(false);
+                }
+            };
+            
+            const handleSelectCustomer = (customer) => {
+                setIsLoading(true);
+                setError('');
+                // Fetch full customer details
+                apiFetch(`/v2/customers/${customer.id}`)
+                    .then(data => {
+                        setSelectedCustomer(data.customer);
+                    })
+                    .catch(err => setError(err.message))
+                    .finally(() => setIsLoading(false));
+            };
+
+            if (!squareAccessToken) {
+                return <AdminSetup onSave={setSquareAccessToken} />;
+            }
+
+            return (
+                <div className="flex h-full bg-gray-100">
+                    {/* Sidebar */}
+                    <div className="w-1/3 max-w-sm bg-white border-r border-gray-200 flex flex-col">
+                        <div className="p-4 border-b">
+                            <h1 className="text-xl font-bold text-gray-800">Customer Search</h1>
+                        </div>
+                        <SearchBar onSearch={handleSearch} isLoading={isLoading} />
+                        <CustomerList customers={customers} onSelectCustomer={handleSelectCustomer} selectedCustomerId={selectedCustomer?.id} />
+                    </div>
+
+                    {/* Main Content */}
+                    <div className="flex-1 p-8 overflow-y-auto">
+                        {isLoading && !selectedCustomer && <div className="flex justify-center items-center h-full"><div className="spinner"></div></div>}
+                        {error && <div className="text-red-500 text-center">{error}</div>}
+                        {!isLoading && selectedCustomer && <CustomerProfile customer={selectedCustomer} />}
+                        {!isLoading && !selectedCustomer && (
+                            <div className="flex items-center justify-center h-full text-gray-500">
+                                <p>Search for a customer to see their details.</p>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
+        // --- Child Components ---
+
+        function AdminSetup({ onSave }) {
+            const [token, setToken] = useState('');
+            return (
+                <div className="flex items-center justify-center h-full">
+                    <div className="w-full max-w-md p-8 bg-white rounded-lg shadow-md text-center">
+                        <h1 className="text-2xl font-bold text-gray-800">CRM Setup</h1>
+                        <p className="text-gray-500 mt-2 mb-6">Please enter your Square Access Token to begin.</p>
+                        <div className="flex items-center space-x-3">
+                            <input 
+                                type="password" 
+                                value={token}
+                                onChange={(e) => setToken(e.target.value)}
+                                className="flex-grow block w-full px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-md" 
+                                placeholder="Square Access Token"
+                            />
+                            <button onClick={() => onSave(token)} className="px-6 py-2 text-white bg-cyan-600 rounded-md hover:bg-cyan-700">
+                                Save
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        function SearchBar({ onSearch, isLoading }) {
+            const [term, setTerm] = useState('');
+            
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                onSearch(term);
+            };
+
+            return (
+                <form onSubmit={handleSubmit} className="p-4 border-b">
+                    <input
+                        type="text"
+                        value={term}
+                        onChange={(e) => setTerm(e.target.value)}
+                        placeholder="Search by name, email, or phone..."
+                        className="w-full px-4 py-2 border rounded-md"
+                    />
+                </form>
+            );
+        }
+
+        function CustomerList({ customers, onSelectCustomer, selectedCustomerId }) {
+            if (customers.length === 0) {
+                return <div className="p-4 text-center text-gray-500">No customers found.</div>;
+            }
+            return (
+                <ul className="overflow-y-auto">
+                    {customers.map(customer => (
+                        <li key={customer.id}>
+                            <button 
+                                onClick={() => onSelectCustomer(customer)}
+                                className={`w-full text-left p-4 hover:bg-cyan-50 ${selectedCustomerId === customer.id ? 'bg-cyan-100' : ''}`}
+                            >
+                                <p className="font-semibold text-gray-800">{customer.given_name} {customer.family_name}</p>
+                                <p className="text-sm text-gray-500">{customer.email_address}</p>
+                            </button>
+                        </li>
+                    ))}
+                </ul>
+            );
+        }
+
+        function CustomerProfile({ customer }) {
+            const formatDate = (dateString) => {
+                if (!dateString) return 'N/A';
+                return new Date(dateString).toLocaleDateString();
+            };
+
+            return (
+                <div>
+                    <h2 className="text-4xl font-bold text-gray-800">{customer.given_name} {customer.family_name}</h2>
+                    <p className="text-gray-500">Customer since {formatDate(customer.created_at)}</p>
+                    
+                    <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6">
+                        <InfoCard title="Contact Information">
+                            <InfoItem label="Email" value={customer.email_address} />
+                            <InfoItem label="Phone" value={customer.phone_number} />
+                        </InfoCard>
+
+                        <InfoCard title="Details">
+                            <InfoItem label="Birthday" value={customer.birthday ? formatDate(customer.birthday) : 'N/A'} />
+                            <InfoItem label="Company" value={customer.company_name} />
+                        </InfoCard>
+
+                        <InfoCard title="Groups & Segments" className="md:col-span-2">
+                             <div className="flex flex-wrap gap-2">
+                                {(customer.group_ids || []).map(id => <Pill key={id} text={`Group: ${id.substring(0, 8)}...`} />)}
+                                {(customer.segment_ids || []).map(id => <Pill key={id} text={`Segment: ${id.substring(0, 8)}...`} color="bg-green-100 text-green-800" />)}
+                            </div>
+                        </InfoCard>
+
+                        <InfoCard title="Notes" className="md:col-span-2">
+                            <p className="text-gray-700 whitespace-pre-wrap">{customer.note || 'No notes for this customer.'}</p>
+                        </InfoCard>
+                    </div>
+                </div>
+            );
+        }
+        
+        // --- Helper Components for Profile ---
+        const InfoCard = ({ title, children, className }) => (
+            <div className={`bg-white p-6 rounded-lg shadow ${className || ''}`}>
+                <h3 className="text-lg font-semibold text-gray-800 border-b pb-2 mb-4">{title}</h3>
+                <div className="space-y-3">{children}</div>
+            </div>
+        );
+
+        const InfoItem = ({ label, value }) => (
+            <div>
+                <p className="text-sm text-gray-500">{label}</p>
+                <p className="font-medium text-gray-800">{value || 'N/A'}</p>
+            </div>
+        );
+        
+        const Pill = ({ text, color = 'bg-gray-100 text-gray-800' }) => (
+            <span className={`px-3 py-1 text-sm font-medium rounded-full ${color}`}>
+                {text}
+            </span>
+        );
+
+
+        const container = document.getElementById('root');
+        const root = ReactDOM.createRoot(container);
+        root.render(<App />);
+    </script>
+</body>
+</html>
