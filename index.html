@@ -31,9 +31,17 @@
             const [isLoading, setIsLoading] = useState(false);
             const [loadingMessage, setLoadingMessage] = useState('');
             const [error, setError] = useState('');
+            
+            // Data stores
             const [allCustomers, setAllCustomers] = useState([]);
             const [customers, setCustomers] = useState([]); // This will be the filtered list
+            const [groupsMap, setGroupsMap] = useState(new Map());
+            const [segmentsMap, setSegmentsMap] = useState(new Map());
+            
+            // Selected customer state
             const [selectedCustomer, setSelectedCustomer] = useState(null);
+            const [customerDetails, setCustomerDetails] = useState(null);
+
 
             const API_PROXY_URL = 'https://square-checkin-backend.onrender.com';
 
@@ -53,35 +61,28 @@
                 return data;
             };
 
-            // Effect to fetch all customers once the token is set
+            // Effect to fetch initial data once the token is set
             useEffect(() => {
                 if (squareAccessToken) {
-                    const fetchAllCustomers = async () => {
+                    const fetchInitialData = async () => {
                         setIsLoading(true);
                         setLoadingMessage('Fetching all customers...');
                         setError('');
-                        let fetchedCustomers = [];
-                        let cursor = undefined;
-
+                        
                         try {
-                            do {
-                                const data = await apiFetch('/v2/customers/search', {
-                                    method: 'POST',
-                                    body: JSON.stringify({
-                                        query: { sort: { field: "CREATED_AT", order: "DESC" } },
-                                        cursor: cursor
-                                    })
-                                });
-                                if (data.customers) {
-                                    fetchedCustomers = [...fetchedCustomers, ...data.customers];
-                                }
-                                cursor = data.cursor;
-                            } while (cursor);
+                            // Fetch customers, groups, and segments in parallel
+                            const [_, groupsData, segmentsData] = await Promise.all([
+                                fetchAllCustomers(),
+                                apiFetch('/v2/customers/groups'),
+                                apiFetch('/v2/customers/segments')
+                            ]);
 
-                            fetchedCustomers.sort((a, b) => (a.given_name || '').localeCompare(b.given_name || ''));
-                            
-                            setAllCustomers(fetchedCustomers);
-                            setCustomers(fetchedCustomers);
+                            if (groupsData.groups) {
+                                setGroupsMap(new Map(groupsData.groups.map(g => [g.id, g.name])));
+                            }
+                            if (segmentsData.segments) {
+                                setSegmentsMap(new Map(segmentsData.segments.map(s => [s.id, s.name])));
+                            }
 
                         } catch (err) {
                             setError(err.message);
@@ -90,13 +91,35 @@
                             setLoadingMessage('');
                         }
                     };
+                    
+                    const fetchAllCustomers = async () => {
+                        let fetchedCustomers = [];
+                        let cursor = undefined;
+                        do {
+                            const data = await apiFetch('/v2/customers/search', {
+                                method: 'POST',
+                                body: JSON.stringify({
+                                    query: { sort: { field: "CREATED_AT", order: "DESC" } },
+                                    cursor: cursor
+                                })
+                            });
+                            if (data.customers) {
+                                fetchedCustomers = [...fetchedCustomers, ...data.customers];
+                            }
+                            cursor = data.cursor;
+                        } while (cursor);
+                        fetchedCustomers.sort((a, b) => (a.given_name || '').localeCompare(b.given_name || ''));
+                        setAllCustomers(fetchedCustomers);
+                        setCustomers(fetchedCustomers);
+                    };
 
-                    fetchAllCustomers();
+                    fetchInitialData();
                 }
             }, [squareAccessToken]);
 
             const handleSearch = (searchTerm) => {
                 setSelectedCustomer(null);
+                setCustomerDetails(null);
                 if (!searchTerm) {
                     setCustomers(allCustomers);
                     return;
@@ -114,17 +137,43 @@
             
             const handleSelectCustomer = (customer) => {
                 setIsLoading(true);
+                setSelectedCustomer(customer);
+                setCustomerDetails(null);
                 setLoadingMessage('Fetching details...');
                 setError('');
-                apiFetch(`/v2/customers/${customer.id}`)
-                    .then(data => {
-                        setSelectedCustomer(data.customer);
-                    })
-                    .catch(err => setError(err.message))
-                    .finally(() => {
+
+                // Fetch full details for the selected customer
+                const fetchDetails = async () => {
+                    try {
+                        const [customerData, ordersData] = await Promise.all([
+                            apiFetch(`/v2/customers/${customer.id}`),
+                            apiFetch('/v2/orders/search', {
+                                method: 'POST',
+                                body: JSON.stringify({
+                                    location_ids: [], // Search all locations
+                                    query: {
+                                        filter: { customer_filter: { customer_ids: [customer.id] } },
+                                        sort: { sort_field: "CLOSED_AT", sort_order: "DESC" }
+                                    },
+                                    limit: 1
+                                })
+                            })
+                        ]);
+                        
+                        setCustomerDetails({
+                            ...customerData.customer,
+                            last_visit: ordersData.orders?.[0]?.closed_at
+                        });
+
+                    } catch (err) {
+                        setError(err.message);
+                    } finally {
                         setIsLoading(false);
                         setLoadingMessage('');
-                    });
+                    }
+                };
+                
+                fetchDetails();
             };
 
             if (!squareAccessToken) {
@@ -153,8 +202,8 @@
                     <div className="flex-1 p-8 overflow-y-auto">
                         {isLoading && selectedCustomer && <div className="flex justify-center items-center h-full"><div className="spinner"></div><p className="ml-2">{loadingMessage}</p></div>}
                         {error && <div className="text-red-500 text-center">{error}</div>}
-                        {!isLoading && selectedCustomer && <CustomerProfile customer={selectedCustomer} />}
-                        {!isLoading && !selectedCustomer && (
+                        {!isLoading && customerDetails && <CustomerProfile customer={customerDetails} groupsMap={groupsMap} segmentsMap={segmentsMap} />}
+                        {!isLoading && !customerDetails && (
                             <div className="flex items-center justify-center h-full text-gray-500">
                                 <p>Select a customer to see their details.</p>
                             </div>
@@ -232,10 +281,21 @@
             );
         }
 
-        function CustomerProfile({ customer }) {
+        function CustomerProfile({ customer, groupsMap, segmentsMap }) {
             const formatDate = (dateString) => {
                 if (!dateString) return 'N/A';
-                return new Date(dateString).toLocaleDateString();
+                return new Date(dateString).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: 'numeric' });
+            };
+            
+            const formatAddress = (address) => {
+                if (!address) return 'N/A';
+                const parts = [
+                    address.address_line_1,
+                    address.address_line_2,
+                    `${address.locality || ''} ${address.administrative_district_level_1 || ''} ${address.postal_code || ''}`.trim(),
+                    address.country
+                ];
+                return parts.filter(Boolean).join(', ');
             };
 
             return (
@@ -243,25 +303,35 @@
                     <h2 className="text-4xl font-bold text-gray-800">{customer.given_name} {customer.family_name}</h2>
                     <p className="text-gray-500">Customer since {formatDate(customer.created_at)}</p>
                     
-                    <div className="mt-8 grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="mt-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                         <InfoCard title="Contact Information">
                             <InfoItem label="Email" value={customer.email_address} />
                             <InfoItem label="Phone" value={customer.phone_number} />
                         </InfoCard>
 
-                        <InfoCard title="Details">
-                            <InfoItem label="Birthday" value={customer.birthday ? formatDate(customer.birthday) : 'N/A'} />
-                            <InfoItem label="Company" value={customer.company_name} />
+                        <InfoCard title="Address">
+                            <p className="text-gray-800">{formatAddress(customer.address)}</p>
                         </InfoCard>
 
-                        <InfoCard title="Groups & Segments" className="md:col-span-2">
+                        <InfoCard title="Stats">
+                             <InfoItem label="Last Visit" value={customer.last_visit ? formatDate(customer.last_visit) : 'No visits found'} />
+                             <InfoItem label="Source" value={customer.creation_source} />
+                        </InfoCard>
+
+                        <InfoCard title="Details" className="md:col-span-2 lg:col-span-1">
+                            <InfoItem label="Birthday" value={customer.birthday} />
+                            <InfoItem label="Company" value={customer.company_name} />
+                            <InfoItem label="Reference ID" value={customer.reference_id} />
+                        </InfoCard>
+
+                        <InfoCard title="Groups & Segments" className="md:col-span-3">
                              <div className="flex flex-wrap gap-2">
-                                {(customer.group_ids || []).map(id => <Pill key={id} text={`Group: ${id.substring(0, 8)}...`} />)}
-                                {(customer.segment_ids || []).map(id => <Pill key={id} text={`Segment: ${id.substring(0, 8)}...`} color="bg-green-100 text-green-800" />)}
+                                {(customer.group_ids || []).map(id => <Pill key={id} text={groupsMap.get(id) || id} />)}
+                                {(customer.segment_ids || []).map(id => <Pill key={id} text={segmentsMap.get(id) || id} color="bg-green-100 text-green-800" />)}
                             </div>
                         </InfoCard>
 
-                        <InfoCard title="Notes" className="md:col-span-2">
+                        <InfoCard title="Notes" className="md:col-span-3">
                             <p className="text-gray-700 whitespace-pre-wrap">{customer.note || 'No notes for this customer.'}</p>
                         </InfoCard>
                     </div>
