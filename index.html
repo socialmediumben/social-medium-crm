@@ -23,7 +23,7 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect } = React;
+        const { useState, useEffect, useMemo } = React;
 
         // --- Main App Component ---
         function App() {
@@ -185,7 +185,7 @@
             };
 
             const renderMainContent = () => {
-                if (isLoading) return <div className="flex justify-center items-center h-full"><div className="spinner"></div><p className="ml-2">{loadingMessage}</p></div>;
+                if (isLoading && !customerDetails) return <div className="flex justify-center items-center h-full"><div className="spinner"></div><p className="ml-2">{loadingMessage}</p></div>;
                 if (error) return <div className="text-red-500 text-center">{error}</div>;
 
                 switch(currentView) {
@@ -291,9 +291,65 @@
         }
         
         function ReportsPage({ allCustomers, groupsMap, segmentsMap, onSelectCustomer, onBack }) {
+            const [filters, setFilters] = useState({ name: '', email: '', phone: '', since: '', groups: '' });
+            const [sortConfig, setSortConfig] = useState({ key: 'name', direction: 'ascending' });
+
+            const filteredAndSortedCustomers = useMemo(() => {
+                let sortableItems = [...allCustomers];
+
+                // Sorting
+                if (sortConfig.key !== null) {
+                    sortableItems.sort((a, b) => {
+                        const aVal = a[sortConfig.key] || '';
+                        const bVal = b[sortConfig.key] || '';
+                        if (aVal < bVal) return sortConfig.direction === 'ascending' ? -1 : 1;
+                        if (aVal > bVal) return sortConfig.direction === 'ascending' ? 1 : -1;
+                        return 0;
+                    });
+                }
+
+                // Filtering
+                return sortableItems.filter(customer => {
+                    const fullName = `${customer.given_name || ''} ${customer.family_name || ''}`.toLowerCase();
+                    const customerGroups = [...(customer.group_ids || []).map(id => groupsMap.get(id) || ''), ...(customer.segment_ids || []).map(id => segmentsMap.get(id) || '')].join(' ').toLowerCase();
+
+                    return (
+                        fullName.includes(filters.name.toLowerCase()) &&
+                        (customer.email_address || '').toLowerCase().includes(filters.email.toLowerCase()) &&
+                        (customer.phone_number || '').includes(filters.phone) &&
+                        (customer.created_at || '').toLowerCase().includes(filters.since.toLowerCase()) &&
+                        customerGroups.includes(filters.groups.toLowerCase())
+                    );
+                });
+            }, [allCustomers, filters, sortConfig]);
+            
+            const requestSort = (key) => {
+                let direction = 'ascending';
+                if (sortConfig.key === key && sortConfig.direction === 'ascending') {
+                    direction = 'descending';
+                }
+                setSortConfig({ key, direction });
+            };
+            
+            const handleFilterChange = (e, key) => {
+                setFilters(prev => ({ ...prev, [key]: e.target.value }));
+            };
+            
             const formatDate = (dateString) => {
                 if (!dateString) return 'N/A';
                 return new Date(dateString).toLocaleDateString();
+            };
+            
+            const SortableHeader = ({ children, name }) => {
+                const isSorted = sortConfig.key === name;
+                return (
+                    <th scope="col" className="px-6 py-3">
+                        <button onClick={() => requestSort(name)} className="flex items-center uppercase">
+                            {children}
+                            {isSorted ? (sortConfig.direction === 'ascending' ? ' ▲' : ' ▼') : null}
+                        </button>
+                    </th>
+                );
             };
 
             return (
@@ -306,15 +362,22 @@
                         <table className="w-full text-sm text-left text-gray-500">
                             <thead className="text-xs text-gray-700 uppercase bg-gray-50">
                                 <tr>
-                                    <th scope="col" className="px-6 py-3">Name</th>
-                                    <th scope="col" className="px-6 py-3">Email</th>
-                                    <th scope="col" className="px-6 py-3">Phone Number</th>
-                                    <th scope="col" className="px-6 py-3">Customer Since</th>
+                                    <SortableHeader name="given_name">Name</SortableHeader>
+                                    <SortableHeader name="email_address">Email</SortableHeader>
+                                    <SortableHeader name="phone_number">Phone Number</SortableHeader>
+                                    <SortableHeader name="created_at">Customer Since</SortableHeader>
                                     <th scope="col" className="px-6 py-3">Groups</th>
+                                </tr>
+                                 <tr className="bg-gray-50">
+                                    <th className="p-2"><input type="text" placeholder="Filter..." onChange={e => handleFilterChange(e, 'name')} className="w-full px-2 py-1 border rounded-md text-xs"/></th>
+                                    <th className="p-2"><input type="text" placeholder="Filter..." onChange={e => handleFilterChange(e, 'email')} className="w-full px-2 py-1 border rounded-md text-xs"/></th>
+                                    <th className="p-2"><input type="text" placeholder="Filter..." onChange={e => handleFilterChange(e, 'phone')} className="w-full px-2 py-1 border rounded-md text-xs"/></th>
+                                    <th className="p-2"><input type="text" placeholder="Filter..." onChange={e => handleFilterChange(e, 'since')} className="w-full px-2 py-1 border rounded-md text-xs"/></th>
+                                    <th className="p-2"><input type="text" placeholder="Filter..." onChange={e => handleFilterChange(e, 'groups')} className="w-full px-2 py-1 border rounded-md text-xs"/></th>
                                 </tr>
                             </thead>
                             <tbody>
-                                {allCustomers.map(customer => (
+                                {filteredAndSortedCustomers.map(customer => (
                                     <tr key={customer.id} className="bg-white border-b hover:bg-gray-50">
                                         <th scope="row" className="px-6 py-4 font-medium text-gray-900 whitespace-nowrap">
                                             <button onClick={() => onSelectCustomer(customer)} className="text-cyan-600 hover:underline">
