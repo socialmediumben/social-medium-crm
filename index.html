@@ -36,7 +36,10 @@
             return new Date(dateString).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: 'numeric' });
         };
 
-        const getNestedValue = (obj, path) => path.reduce((acc, part) => acc && acc[part], obj);
+        const getNestedValue = (obj, path) => {
+            if (!path) return undefined;
+            return path.reduce((acc, part) => acc && acc[part], obj);
+        }
         
         const getRelativeDateRange = (period) => {
             const now = new Date();
@@ -302,21 +305,25 @@
         function DashboardWidget({ widget, allCustomers, groupsMap, segmentsMap, onSelectCustomer }) {
              const filteredCustomers = useMemo(() => {
                 let customers = [...allCustomers];
-                // This is a simplified version of the report filtering logic for widgets
-                if (widget.reportingPeriod?.relative !== 'all' && widget.reportingPeriod?.start && widget.reportingPeriod?.end) {
-                    const start = new Date(widget.reportingPeriod.start);
-                    const end = new Date(widget.reportingPeriod.end);
-                    customers = customers.filter(c => {
-                        const createdAt = new Date(c.created_at);
-                        return createdAt >= start && createdAt <= end;
-                    });
+                if (widget.reportingPeriod?.relative && widget.reportingPeriod.relative !== 'all') {
+                    const { start, end } = getRelativeDateRange(widget.reportingPeriod.relative);
+                     if (start && end) {
+                        const startDate = new Date(start);
+                        const endDate = new Date(end);
+                        customers = customers.filter(c => {
+                            const createdAt = new Date(c.created_at);
+                            return createdAt >= startDate && createdAt <= endDate;
+                        });
+                    }
                 }
                 
                 return customers.filter(customer => {
                     return Object.entries(widget.filters).every(([key, filterConfig]) => {
-                        if (!filterConfig || filterConfig.values.size === 0) return true;
+                        if (!filterConfig || !filterConfig.values || filterConfig.values.size === 0) return true;
+                        
                         const col = widget.columns.find(c => c.key === key);
                         if (!col) return true;
+                        
                         let customerValue;
                         if (col.key === 'groups') {
                             customerValue = [...(customer.group_ids || []).map(id => groupsMap.get(id) || ''), ...(customer.segment_ids || []).map(id => segmentsMap.get(id) || '')].join(', ');
