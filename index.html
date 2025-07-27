@@ -6,9 +6,11 @@
     <title>Social Medium CRM</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <!-- React and Babel -->
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Firebase SDKs -->
     <script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-firestore-compat.js"></script>
@@ -24,9 +26,10 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useMemo } = React;
+        const { useState, useEffect, useMemo, useCallback } = React;
 
         // --- Firebase Configuration ---
+        // IMPORTANT: Replace with your actual Firebase configuration
         const firebaseConfig = {
           apiKey: "AIzaSyCImFoyVJdVcRS-c7MXADhTQL7BGa20hHg",
           authDomain: "social-medium-crm.firebaseapp.com",
@@ -45,12 +48,16 @@
         // --- Utility Functions ---
         const formatSimpleDate = (dateString) => {
             if (!dateString || dateString === 'N/A') return 'N/A';
-            return new Date(dateString).toLocaleDateString();
+            const date = new Date(dateString);
+            if (isNaN(date)) return 'N/A';
+            return date.toLocaleDateString();
         };
 
         const formatDetailedDate = (dateString) => {
             if (!dateString) return 'N/A';
-            return new Date(dateString).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: 'numeric' });
+            const date = new Date(dateString);
+            if (isNaN(date)) return 'N/A';
+            return date.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: 'numeric' });
         };
 
         const getNestedValue = (obj, path) => {
@@ -124,7 +131,6 @@
             const [selectedCustomer, setSelectedCustomer] = useState(null);
             const [customerDetails, setCustomerDetails] = useState(null);
 
-
             const API_PROXY_URL = 'https://square-checkin-backend.onrender.com';
 
             const apiFetch = async (endpoint, options = {}) => {
@@ -160,10 +166,11 @@
                     const deserializeReports = (reports = []) => {
                         return reports.map(report => ({
                             ...report,
-                            filters: Object.entries(report.filters).reduce((acc, [key, val]) => {
-                                acc[key] = { ...val, values: new Set(val.values) };
+                            filters: Object.entries(report.filters || {}).reduce((acc, [key, val]) => {
+                                acc[key] = { ...val, values: new Set(val.values || []) };
                                 return acc;
-                            }, {})
+                            }, {}),
+                            purchaseFilters: report.purchaseFilters || []
                         }));
                     };
 
@@ -213,8 +220,11 @@
                             if (catalogData.objects) setCatalogItems(catalogData.objects);
                             
                             const activeLocation = locationData.locations?.find(loc => loc.status === 'ACTIVE');
-                            if (activeLocation) setLocationId(activeLocation.id);
-                            else throw new Error("No active location found for this business.");
+                            if (activeLocation) {
+                                setLocationId(activeLocation.id);
+                            } else {
+                                throw new Error("No active location found for this business.");
+                            }
                             
                             await fetchAllCustomers();
 
@@ -252,7 +262,7 @@
                 setSelectedCustomer(customer);
                 setCustomerDetails(null);
                 setCurrentView('profile');
-                setLoadingMessage('Fetching details...');
+                setLoadingMessage('Fetching customer details...');
                 setError('');
 
                 const fetchDetails = async () => {
@@ -328,9 +338,6 @@
                     const userDocRef = db.collection('users').doc(user.uid);
                     userDocRef.update({
                         savedReports: firebase.firestore.FieldValue.arrayUnion(serializedReport)
-                    }).catch(err => {
-                        console.error("Error saving personal report:", err);
-                        setError("Could not save personal report.");
                     });
                 }
             };
@@ -348,9 +355,11 @@
             };
 
             const handleDeleteReport = (reportId, isPersonal) => {
+                const reportFinder = (r) => r.id === reportId;
+                
                 if (isPersonal) {
                     const userDocRef = db.collection('users').doc(user.uid);
-                    const reportToDelete = personalReports.find(r => r.id === reportId);
+                    const reportToDelete = personalReports.find(reportFinder);
                     if(reportToDelete) {
                         userDocRef.update({
                             savedReports: firebase.firestore.FieldValue.arrayRemove(serializeReport(reportToDelete))
@@ -358,7 +367,7 @@
                     }
                 } else {
                     const publicReportsDocRef = db.collection('public').doc('reports');
-                    const reportToDelete = publicReports.find(r => r.id === reportId);
+                    const reportToDelete = publicReports.find(reportFinder);
                      if(reportToDelete) {
                         publicReportsDocRef.update({
                             allReports: firebase.firestore.FieldValue.arrayRemove(serializeReport(reportToDelete))
@@ -402,7 +411,7 @@
 
                 switch(currentView) {
                     case 'profile':
-                        return customerDetails ? <CustomerProfile customer={customerDetails} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} apiFetch={apiFetch} onBack={() => setCurrentView('directory')} /> : <div className="flex justify-center items-center h-full"><div className="spinner"></div></div>;
+                        return customerDetails ? <CustomerProfile customer={customerDetails} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} onBack={() => setCurrentView('directory')} /> : <div className="flex justify-center items-center h-full"><div className="spinner"></div></div>;
                     case 'reports':
                         return <ReportsPage allCustomers={allCustomers} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} onSelectCustomer={handleSelectCustomer} onBack={() => setCurrentView('dashboard')} apiFetch={apiFetch} savedReports={combinedReports} onSaveReport={handleSaveReport} onRenameReport={handleRenameReport} onDeleteReport={handleDeleteReport} catalogItems={catalogItems} locationId={locationId} initialReport={reportToLoad} onInitialReportLoaded={() => setReportToLoad(null)} />;
                     case 'directory':
@@ -555,18 +564,19 @@
         function DashboardWidget({ widget, allCustomers, groupsMap, segmentsMap, onSelectCustomer, onWidgetClick }) {
              const filteredCustomers = useMemo(() => {
                 let customers = [...allCustomers];
-                // Note: Widget filtering logic might need refinement based on saved report structure
-                // This is a basic implementation
+                // Note: Widget filtering logic is simplified for performance on the dashboard.
+                // It doesn't include purchase history or complex date logic.
                 return customers.filter(customer => {
-                    return Object.entries(widget.filters).every(([key, filterConfig]) => {
+                    return Object.entries(widget.filters || {}).every(([key, filterConfig]) => {
                         if (!filterConfig || !filterConfig.values || filterConfig.values.size === 0) return true;
                         
                         const col = widget.columns.find(c => c.key === key);
-                        if (!col || col.isPurchase) return true; // Purchase history filtering on dashboard widgets can be complex, skipping for now
+                        if (!col || col.isPurchase) return true; 
                         
                         let customerValue;
                         if (col.key === 'groups') {
-                             customerValue = [...(customer.group_ids || []).map(id => groupsMap.get(id)), ...(customer.segment_ids || []).map(id => segmentsMap.get(id))].filter(Boolean).join(', ');
+                             const customerGroups = new Set([...(customer.group_ids || []).map(id => groupsMap.get(id)), ...(customer.segment_ids || []).map(id => segmentsMap.get(id))].filter(Boolean));
+                             return Array.from(filterConfig.values).some(v => customerGroups.has(v));
                         } else {
                             customerValue = (getNestedValue(customer, col.path) || 'N/A').toString();
                         }
@@ -635,7 +645,7 @@
         }
 
         function ReportsPage({ allCustomers, groupsMap, segmentsMap, customAttrDefs, onSelectCustomer, onBack, apiFetch, savedReports, onSaveReport, onRenameReport, onDeleteReport, catalogItems, locationId, initialReport, onInitialReportLoaded }) {
-            const getInitialColumns = () => {
+            const getInitialColumns = useCallback(() => {
                 const standardColumns = [
                     { key: 'given_name', label: 'First Name', visible: true, path: ['given_name'] },
                     { key: 'family_name', label: 'Last Name', visible: true, path: ['family_name'] },
@@ -648,40 +658,24 @@
                     key: def.key, label: def.name, visible: false, isCustom: true, path: ['custom_attributes', def.key, 'value']
                 }));
                 return [...standardColumns, ...customColumns];
-            };
+            }, [customAttrDefs]);
 
             const [columns, setColumns] = useState(getInitialColumns);
-            const [filters, setFilters] = useState({});
+            const [columnFilters, setColumnFilters] = useState({});
+            const [purchaseFilters, setPurchaseFilters] = useState([]); // New state for background purchase filters
             const [sortConfig, setSortConfig] = useState({ key: 'given_name', direction: 'ascending' });
             const [purchaseDataCache, setPurchaseDataCache] = useState({});
             const [isFetchingData, setIsFetchingData] = useState(false);
-            const [activeFilterPopup, setActiveFilterPopup] = useState(null);
+            const [activeColumnFilterPopup, setActiveColumnFilterPopup] = useState(null);
             const [reportingPeriod, setReportingPeriod] = useState({ start: '', end: '', relative: 'all' });
             const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
             
             const visibleColumns = useMemo(() => columns.filter(c => c.visible), [columns]);
-            
-            const handleAddPurchaseColumn = (item, displayMode) => {
-                const columnKey = `${item.id}-${displayMode}`;
-                const itemName = item.item_data.name;
-                const existingCol = columns.find(c => c.key === columnKey);
 
-                if (existingCol) {
-                     setColumns(prev => prev.filter(c => c.key !== columnKey));
-                } else {
-                    let label = '';
-                    if (displayMode === 'yesNo') label = `${itemName} (Purchased)`;
-                    if (displayMode === 'lastDate') label = `${itemName} (Last Purchase)`;
-                    if (displayMode === 'quantity') label = `${itemName} (Qty)`;
-                    
-                    const newColumn = { key: columnKey, label, visible: true, isPurchase: true, itemId: item.id, displayMode };
-                    setColumns(prev => [...prev, newColumn]);
-                    
-                    fetchPurchaseData(item, reportingPeriod, newColumn);
-                }
-            };
-            
-            const fetchPurchaseData = async (item, period, column) => {
+            const fetchPurchaseData = useCallback(async (itemId, period) => {
+                const item = catalogItems.find(i => i.id === itemId);
+                if (!item) return;
+
                 setIsFetchingData(true);
                 try {
                     const variationIds = item.item_data.variations.map(v => v.id);
@@ -727,32 +721,50 @@
                         });
                         customerPurchaseData.set(order.customer_id, customerData);
                     });
-                    setPurchaseDataCache(prev => ({ ...prev, [item.id]: customerPurchaseData }));
+                    setPurchaseDataCache(prev => ({ ...prev, [itemId]: customerPurchaseData }));
                 } catch (err) {
-                    console.error("Error fetching purchase data for item " + item.id, err);
-                    setColumns(prev => prev.filter(c => c.key !== column.key)); // Remove column on error
+                    console.error("Error fetching purchase data for item " + itemId, err);
                 } finally {
                     setIsFetchingData(false);
                 }
-            };
-            
+            }, [apiFetch, locationId, catalogItems]);
+
+            // Effect to fetch data for any purchase filter or visible purchase column
             useEffect(() => {
-                const visiblePurchaseCols = columns.filter(c => c.isPurchase && c.visible);
-                if (visiblePurchaseCols.length > 0) {
-                   setPurchaseDataCache({});
-                   visiblePurchaseCols.forEach(col => {
-                       const item = catalogItems.find(item => item.id === col.itemId);
-                       if (item) {
-                           fetchPurchaseData(item, reportingPeriod, col);
-                       }
-                   });
-                }
-            }, [reportingPeriod, locationId]);
+                const requiredItemIds = new Set();
+                purchaseFilters.forEach(f => requiredItemIds.add(f.itemId));
+                columns.forEach(c => {
+                    if (c.isPurchase && c.visible) {
+                        requiredItemIds.add(c.itemId);
+                    }
+                });
+
+                requiredItemIds.forEach(itemId => {
+                    if (!purchaseDataCache[itemId]) {
+                        fetchPurchaseData(itemId, reportingPeriod);
+                    }
+                });
+            }, [purchaseFilters, columns, reportingPeriod, purchaseDataCache, fetchPurchaseData]);
+            
+            const handleAddOrUpdatePurchaseColumn = (item, displayMode) => {
+                const newColumnKey = `${item.id}-${displayMode}`;
+                let label = '';
+                if (displayMode === 'yesNo') label = `${item.item_data.name} (Purchased)`;
+                if (displayMode === 'lastDate') label = `${item.item_data.name} (Last Purchase)`;
+                if (displayMode === 'quantity') label = `${item.item_data.name} (Qty)`;
+                
+                const newColumn = { key: newColumnKey, label, visible: true, isPurchase: true, itemId: item.id, displayMode };
+
+                setColumns(prev => {
+                    // Remove any other column for the same item
+                    const otherItemColumnsRemoved = prev.filter(c => !(c.isPurchase && c.itemId === item.id));
+                    return [...otherItemColumnsRemoved, newColumn];
+                });
+            };
             
             const filteredAndSortedCustomers = useMemo(() => {
                 let filtered = [...allCustomers];
                 
-                // Date Range Filtering (for customer creation date)
                 let currentReportingPeriod = {...reportingPeriod};
                 if(reportingPeriod.relative !== 'all' && reportingPeriod.relative !== 'custom') {
                     currentReportingPeriod = getRelativeDateRange(reportingPeriod.relative);
@@ -767,15 +779,38 @@
                     });
                 }
 
-                // Column Filters
+                // Apply background purchase filters first
+                if (purchaseFilters.length > 0) {
+                    filtered = filtered.filter(customer => {
+                        return purchaseFilters.every(filter => {
+                            const purchaseData = purchaseDataCache[filter.itemId];
+                            if (!purchaseData) return false; // Data not loaded yet, exclude customer
+                            const customerData = purchaseData.get(customer.id);
+
+                            switch (filter.type) {
+                                case 'purchased':
+                                    return customerData ? filter.value === 'yes' : filter.value === 'no';
+                                case 'quantity':
+                                    const quantity = customerData?.quantity || 0;
+                                    const filterValue = parseFloat(filter.value);
+                                    if (filter.condition === 'greaterThan') return quantity > filterValue;
+                                    if (filter.condition === 'lessThan') return quantity < filterValue;
+                                    return false;
+                                default:
+                                    return true;
+                            }
+                        });
+                    });
+                }
+
+                // Apply column filters
                 filtered = filtered.filter(customer => {
-                    return Object.entries(filters).every(([key, filterConfig]) => {
+                    return Object.entries(columnFilters).every(([key, filterConfig]) => {
                         if (!filterConfig) return true;
                         
                         const col = columns.find(c => c.key === key);
                         if (!col) return true;
 
-                        // Checkbox filters
                         if (filterConfig.values && filterConfig.values.size > 0) {
                             let customerValue;
                             if (col.isPurchase) {
@@ -786,9 +821,7 @@
                             } else if (col.key === 'groups') {
                                 const groupNames = (customer.group_ids || []).map(id => groupsMap.get(id) || '');
                                 const segmentNames = (customer.segment_ids || []).map(id => segmentsMap.get(id) || '');
-                                const allNames = [...groupNames, ...segmentNames].filter(Boolean).join(', ');
-                                // This part is tricky. Let's check if ANY of the customer's groups/segments are in the filter.
-                                const customerGroups = new Set([...groupNames, ...segmentNames]);
+                                const customerGroups = new Set([...groupNames, ...segmentNames].filter(Boolean));
                                 return Array.from(filterConfig.values).some(v => customerGroups.has(v));
                             } else {
                                 customerValue = getNestedValue(customer, col.path);
@@ -798,7 +831,6 @@
                             if (!filterConfig.values.has(customerValue)) return false;
                         }
 
-                        // Condition filters
                         if (filterConfig.condition && filterConfig.condition.type !== 'none') {
                             if (!col.isPurchase || col.displayMode !== 'quantity') return true;
                             
@@ -820,7 +852,6 @@
                     filtered.sort((a, b) => {
                         const col = columns.find(c => c.key === sortConfig.key);
                         if (!col) return 0;
-
                         let aVal, bVal;
                         if (col.isPurchase) {
                             const aData = purchaseDataCache[col.itemId]?.get(a.id);
@@ -836,7 +867,6 @@
                             aVal = getNestedValue(a, col.path) || ''; 
                             bVal = getNestedValue(b, col.path) || '';
                         }
-
                         if (typeof aVal === 'string' && typeof bVal === 'string') {
                             return sortConfig.direction === 'ascending' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
                         }
@@ -846,16 +876,17 @@
                     });
                 }
                 return filtered;
-            }, [allCustomers, filters, sortConfig, columns, purchaseDataCache, reportingPeriod, groupsMap, segmentsMap]);
+            }, [allCustomers, columnFilters, purchaseFilters, sortConfig, columns, purchaseDataCache, reportingPeriod, groupsMap, segmentsMap]);
             
             const handleModalSave = (name, isWidget, isShared) => {
-                const report = { name, filters, sortConfig, columns, reportingPeriod, isWidget, isShared };
+                const report = { name, filters: columnFilters, purchaseFilters, sortConfig, columns, reportingPeriod, isWidget, isShared };
                 onSaveReport(report, isWidget, isShared);
                 setIsSaveModalOpen(false);
             };
             
             const handleLoadReport = (report) => {
-                setFilters(report.filters || {});
+                setColumnFilters(report.filters || {});
+                setPurchaseFilters(report.purchaseFilters || []);
                 setSortConfig(report.sortConfig || { key: 'given_name', direction: 'ascending' });
                 setColumns(report.columns || getInitialColumns());
                 setReportingPeriod(report.reportingPeriod || { start: '', end: '', relative: 'all' });
@@ -866,7 +897,7 @@
                     handleLoadReport(initialReport);
                     onInitialReportLoaded();
                 }
-            }, [initialReport, onInitialReportLoaded]);
+            }, [initialReport, onInitialReportLoaded, getInitialColumns]);
 
             return (
                 <div className="flex h-full">
@@ -877,11 +908,13 @@
                         onLoadReport={handleLoadReport}
                         onSaveReportClick={() => setIsSaveModalOpen(true)}
                         catalogItems={catalogItems}
-                        onAddPurchaseColumn={handleAddPurchaseColumn}
+                        onAddOrUpdatePurchaseColumn={handleAddOrUpdatePurchaseColumn}
                         reportingPeriod={reportingPeriod}
                         setReportingPeriod={setReportingPeriod}
                         onRenameReport={onRenameReport}
                         onDeleteReport={onDeleteReport}
+                        purchaseFilters={purchaseFilters}
+                        setPurchaseFilters={setPurchaseFilters}
                     />
                     <div className="flex-1 p-8 overflow-y-auto">
                          <div className="flex justify-between items-center mb-6">
@@ -892,7 +925,7 @@
                          <div className="mt-8 bg-white rounded-lg shadow overflow-x-auto">
                             <table className="w-full text-sm text-left text-gray-500">
                                 <thead className="text-xs text-gray-700 uppercase bg-gray-50">
-                                    <tr>{visibleColumns.map(col => <SortableHeader key={col.key} col={col} setSortConfig={setSortConfig} sortConfig={sortConfig} setActiveFilterPopup={setActiveFilterPopup} filters={filters} />)}</tr>
+                                    <tr>{visibleColumns.map(col => <SortableHeader key={col.key} col={col} setSortConfig={setSortConfig} sortConfig={sortConfig} setActiveFilterPopup={setActiveColumnFilterPopup} filters={columnFilters} />)}</tr>
                                 </thead>
                                 <tbody>
                                     {isFetchingData && <tr><td colSpan={visibleColumns.length} className="text-center p-4"><div className="flex items-center justify-center"><div className="spinner mr-2"></div>Fetching purchase data...</div></td></tr>}
@@ -902,10 +935,7 @@
                                             {visibleColumns.map(col => {
                                                 let cellContent = 'N/A';
                                                 if (col.key === 'given_name') {
-                                                    cellContent = <button onClick={() => onSelectCustomer(customer)} className="text-cyan-600 hover:underline font-medium whitespace-nowrap">{customer.given_name || ''} {customer.family_name || ''}</button>;
-                                                } else if (col.key === 'family_name') {
-                                                    // This column is now combined with given_name, but we'll leave the logic in case it's separated again.
-                                                    cellContent = customer.family_name || 'N/A';
+                                                    cellContent = <button onClick={() => onSelectCustomer(customer)} className="text-cyan-600 hover:underline font-medium whitespace-nowrap">{customer.given_name || ''}</button>;
                                                 } else if (col.key === 'groups') {
                                                     const groupNames = (customer.group_ids || []).map(id => ({ name: groupsMap.get(id) || id, color: 'bg-gray-100 text-gray-800' }));
                                                     const segmentNames = (customer.segment_ids || []).map(id => ({ name: segmentsMap.get(id) || id, color: 'bg-green-100 text-green-800' }));
@@ -929,7 +959,7 @@
                             </table>
                         </div>
                     </div>
-                    {activeFilterPopup && <FilterPopup column={activeFilterPopup} allCustomers={allCustomers} filters={filters} setFilters={setFilters} onClose={() => setActiveFilterPopup(null)} getNestedValue={getNestedValue} groupsMap={groupsMap} segmentsMap={segmentsMap} purchaseDataCache={purchaseDataCache} />}
+                    {activeColumnFilterPopup && <FilterPopup column={activeColumnFilterPopup} allCustomers={allCustomers} filters={columnFilters} setFilters={setColumnFilters} onClose={() => setActiveColumnFilterPopup(null)} getNestedValue={getNestedValue} groupsMap={groupsMap} segmentsMap={segmentsMap} purchaseDataCache={purchaseDataCache} />}
                     {isSaveModalOpen && <SaveReportModal onSave={handleModalSave} onCancel={() => setIsSaveModalOpen(false)} />}
                 </div>
             );
@@ -939,19 +969,11 @@
             const isSorted = sortConfig.key === col.key;
             const isFiltered = filters[col.key] && ((filters[col.key].values && filters[col.key].values.size > 0) || (filters[col.key].condition && filters[col.key].condition.type !== 'none'));
 
-            // Don't render the header for family_name if given_name is visible, as they are combined.
-            if (col.key === 'family_name') return null;
-            
-            let label = col.label;
-            if (col.key === 'given_name') {
-                label = 'Name';
-            }
-
             return (
                 <th scope="col" className="px-6 py-3">
                     <div className="flex items-center">
                         <button onClick={() => setSortConfig({ key: col.key, direction: sortConfig.key === col.key && sortConfig.direction === 'ascending' ? 'descending' : 'ascending' })} className="uppercase font-bold">
-                            {label}
+                            {col.label}
                         </button>
                         {isSorted && (sortConfig.direction === 'ascending' ? <span className="ml-1">▲</span> : <span className="ml-1">▼</span>)}
                         <button onClick={() => setActiveFilterPopup(col)} className="ml-2 text-gray-400 hover:text-gray-700">
@@ -1077,18 +1099,86 @@
                 </div>
             );
         }
+        
+        function SidebarSection({ title, id, children, isOpen, onToggle }) {
+            return (
+                <div>
+                    <button onClick={() => onToggle(id)} className="font-semibold w-full text-left flex justify-between items-center py-2">
+                        {title}
+                        <span className="transform transition-transform">{isOpen ? '−' : '+'}</span>
+                    </button>
+                    {isOpen && <div className="mt-2 space-y-2 pl-2 border-l-2 border-gray-200">{children}</div>}
+                </div>
+            );
+        }
 
-        function ReportsSidebar({ columns, setColumns, savedReports, onLoadReport, onSaveReportClick, catalogItems, onAddPurchaseColumn, reportingPeriod, setReportingPeriod, onRenameReport, onDeleteReport }) {
-            const [openSections, setOpenSections] = useState({
-                period: true,
-                reports: true,
-                columns: true,
-                purchase: true
-            });
+        function PurchaseFilterModal({ item, onSave, onCancel, existingFilter }) {
+            const [filterType, setFilterType] = useState(existingFilter?.type || 'purchased');
+            const [filterValue, setFilterValue] = useState(existingFilter?.value || 'yes');
+            const [condition, setCondition] = useState(existingFilter?.condition || 'greaterThan');
+            const [quantity, setQuantity] = useState(existingFilter?.value || 0);
+
+            const handleSave = () => {
+                if (filterType === 'purchased') {
+                    onSave({ itemId: item.id, type: 'purchased', value: filterValue });
+                } else {
+                    onSave({ itemId: item.id, type: 'quantity', condition: condition, value: quantity });
+                }
+            };
+
+            return (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50" onClick={onCancel}>
+                    <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md" onClick={e => e.stopPropagation()}>
+                        <h3 className="font-bold text-lg">Filter by: {item.item_data.name}</h3>
+                        <div className="mt-4 space-y-4">
+                            <div>
+                                <label className="block text-sm font-medium text-gray-700">Filter Type</label>
+                                <select value={filterType} onChange={e => setFilterType(e.target.value)} className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-cyan-500 focus:border-cyan-500 sm:text-sm rounded-md">
+                                    <option value="purchased">Purchased Status</option>
+                                    <option value="quantity">Quantity Purchased</option>
+                                </select>
+                            </div>
+                            {filterType === 'purchased' && (
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700">Status</label>
+                                    <select value={filterValue} onChange={e => setFilterValue(e.target.value)} className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-cyan-500 focus:border-cyan-500 sm:text-sm rounded-md">
+                                        <option value="yes">Has Purchased</option>
+                                        <option value="no">Has Not Purchased</option>
+                                    </select>
+                                </div>
+                            )}
+                            {filterType === 'quantity' && (
+                                <div className="space-y-2">
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700">Condition</label>
+                                        <select value={condition} onChange={e => setCondition(e.target.value)} className="mt-1 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-cyan-500 focus:border-cyan-500 sm:text-sm rounded-md">
+                                            <option value="greaterThan">Greater than</option>
+                                            <option value="lessThan">Less than</option>
+                                        </select>
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700">Quantity</label>
+                                        <input type="number" value={quantity} onChange={e => setQuantity(e.target.value)} className="mt-1 focus:ring-cyan-500 focus:border-cyan-500 block w-full shadow-sm sm:text-sm border-gray-300 rounded-md"/>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                        <div className="mt-6 flex justify-end space-x-2">
+                            <button onClick={onCancel} className="px-4 py-2 bg-gray-200 rounded-md">Cancel</button>
+                            <button onClick={handleSave} className="px-4 py-2 bg-cyan-600 text-white rounded-md">{existingFilter ? 'Update' : 'Add'} Filter</button>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        function ReportsSidebar({ columns, setColumns, savedReports, onLoadReport, onSaveReportClick, catalogItems, onAddOrUpdatePurchaseColumn, reportingPeriod, setReportingPeriod, onRenameReport, onDeleteReport, purchaseFilters, setPurchaseFilters }) {
+            const [openSections, setOpenSections] = useState({ period: true, reports: true, columns: true, purchase: true, activeFilters: true, activeColumns: true });
             const [purchaseSearch, setPurchaseSearch] = useState('');
-            const [activePopper, setActivePopper] = useState(null);
+            const [activeColumnPopper, setActiveColumnPopper] = useState(null);
             const [renameModal, setRenameModal] = useState(null);
             const [deleteModal, setDeleteModal] = useState(null);
+            const [editingFilter, setEditingFilter] = useState(null); // Can be { filter, index }
 
             const toggleSection = (section) => setOpenSections(prev => ({...prev, [section]: !prev[section]}));
 
@@ -1098,12 +1188,15 @@
             }, [purchaseSearch, catalogItems]);
 
             const handleColumnToggle = (key) => {
-                setColumns(prev => prev.map(c => {
-                    if (c.key === key) return { ...c, visible: !c.visible };
-                    // Special handling to show/hide 'family_name' with 'given_name'
-                    if (key === 'given_name' && c.key === 'family_name') return { ...c, visible: !c.visible };
-                    return c;
-                }));
+                setColumns(prev => prev.map(c => c.key === key ? { ...c, visible: !c.visible } : c));
+            };
+            
+            const handleRemoveColumn = (keyToRemove) => {
+                setColumns(prevColumns =>
+                    prevColumns.map(col =>
+                        col.key === keyToRemove ? { ...col, visible: false } : col
+                    )
+                );
             };
 
             const handleRelativeDateChange = (e) => {
@@ -1112,28 +1205,36 @@
             };
             
             const handleRename = (newName) => {
-                if (newName && renameModal) {
-                    onRenameReport(renameModal.id, newName, renameModal.isPersonal);
-                }
+                if (newName && renameModal) { onRenameReport(renameModal.id, newName, renameModal.isPersonal); }
                 setRenameModal(null);
             };
 
             const handleDelete = () => {
-                if (deleteModal) {
-                    onDeleteReport(deleteModal.id, deleteModal.isPersonal);
-                }
+                if (deleteModal) { onDeleteReport(deleteModal.id, deleteModal.isPersonal); }
                 setDeleteModal(null);
             };
+
+            const handleSavePurchaseFilter = (filter) => {
+                if (editingFilter && editingFilter.index !== null) {
+                    setPurchaseFilters(prev => prev.map((f, i) => i === editingFilter.index ? filter : f));
+                } else {
+                    setPurchaseFilters(prev => [...prev, filter]);
+                }
+                setEditingFilter(null);
+            };
             
-            const SidebarSection = ({ title, id, children }) => (
-                <div>
-                    <button onClick={() => toggleSection(id)} className="font-semibold w-full text-left flex justify-between items-center py-2">
-                        {title}
-                        <span className="transform transition-transform">{openSections[id] ? '−' : '+'}</span>
-                    </button>
-                    {openSections[id] && <div className="mt-2 space-y-2 pl-2 border-l-2 border-gray-200">{children}</div>}
-                </div>
-            );
+            const getFilterDescription = (filter) => {
+                const item = catalogItems.find(i => i.id === filter.itemId);
+                const itemName = item ? item.item_data.name : 'Unknown Item';
+                if (filter.type === 'purchased') {
+                    return `${itemName}: Purchased is ${filter.value}`;
+                }
+                if (filter.type === 'quantity') {
+                    const conditionText = filter.condition === 'greaterThan' ? '>' : '<';
+                    return `${itemName}: Quantity ${conditionText} ${filter.value}`;
+                }
+                return 'Unknown filter';
+            };
 
             return (
                 <>
@@ -1143,7 +1244,52 @@
                         <button onClick={onSaveReportClick} className="w-full px-4 py-2 bg-cyan-600 text-white rounded-md shadow-sm hover:bg-cyan-700">Save Report</button>
                     </div>
                     
-                    <SidebarSection title="Reporting Period" id="period">
+                    <SidebarSection title="Active Filters" id="activeFilters" isOpen={openSections.activeFilters} onToggle={toggleSection}>
+                        {purchaseFilters.length === 0 ? (
+                            <p className="text-sm text-gray-500">No active filters.</p>
+                        ) : (
+                            <ul className="space-y-1">
+                                {purchaseFilters.map((filter, index) => (
+                                    <li key={index} className="flex items-center justify-between text-sm bg-gray-100 p-1 rounded group">
+                                        <span className="truncate">{getFilterDescription(filter)}</span>
+                                        <div className="flex items-center">
+                                            <button onClick={() => setEditingFilter({ filter, index })} className="p-1 hover:bg-gray-200 rounded text-xs hidden group-hover:block">✏️</button>
+                                            <button onClick={() => setPurchaseFilters(prev => prev.filter((_, i) => i !== index))} className="text-red-500 hover:text-red-700 ml-1">&times;</button>
+                                        </div>
+                                    </li>
+                                ))}
+                            </ul>
+                        )}
+                    </SidebarSection>
+                    
+                    <SidebarSection title="Active Columns" id="activeColumns" isOpen={openSections.activeColumns} onToggle={toggleSection}>
+                        {columns.filter(c => c.visible).length === 0 ? (
+                            <p className="text-sm text-gray-500">No visible columns.</p>
+                        ) : (
+                            <ul className="space-y-1">
+                                {columns.filter(c => c.visible).map((col) => (
+                                    <li key={col.key} className="flex items-center justify-between text-sm bg-gray-100 p-1 rounded group relative">
+                                        <span className="truncate">{col.label}</span>
+                                        <div className="flex items-center">
+                                            {col.isPurchase && (
+                                                <button onClick={() => setActiveColumnPopper(activeColumnPopper === col.key ? null : col.key)} className="p-1 hover:bg-gray-200 rounded text-xs hidden group-hover:block">✏️</button>
+                                            )}
+                                            <button onClick={() => handleRemoveColumn(col.key)} className="text-red-500 hover:text-red-700 ml-1">&times;</button>
+                                        </div>
+                                        {activeColumnPopper === col.key && col.isPurchase && (
+                                            <div className="absolute right-0 top-full mt-1 w-48 bg-white rounded-md shadow-lg z-20 p-2 border">
+                                                <button onClick={() => {onAddOrUpdatePurchaseColumn(catalogItems.find(i=>i.id === col.itemId), 'yesNo'); setActiveColumnPopper(null);}} className="block w-full text-left text-sm p-1 hover:bg-gray-100">Purchased (Y/N)</button>
+                                                <button onClick={() => {onAddOrUpdatePurchaseColumn(catalogItems.find(i=>i.id === col.itemId), 'lastDate'); setActiveColumnPopper(null);}} className="block w-full text-left text-sm p-1 hover:bg-gray-100">Last Purchase Date</button>
+                                                <button onClick={() => {onAddOrUpdatePurchaseColumn(catalogItems.find(i=>i.id === col.itemId), 'quantity'); setActiveColumnPopper(null);}} className="block w-full text-left text-sm p-1 hover:bg-gray-100">Total Quantity</button>
+                                            </div>
+                                        )}
+                                    </li>
+                                ))}
+                            </ul>
+                        )}
+                    </SidebarSection>
+                    
+                    <SidebarSection title="Reporting Period" id="period" isOpen={openSections.period} onToggle={toggleSection}>
                         <select onChange={handleRelativeDateChange} value={reportingPeriod.relative} className="w-full px-2 py-1 border rounded-md text-sm">
                             <option value="all">All Time</option>
                             <option value="yesterday">Yesterday</option>
@@ -1165,7 +1311,7 @@
                         </>}
                     </SidebarSection>
 
-                    <SidebarSection title="Saved Reports" id="reports">
+                    <SidebarSection title="Saved Reports" id="reports" isOpen={openSections.reports} onToggle={toggleSection}>
                         <div className="max-h-60 overflow-y-auto">
                         {savedReports.map((r) => (
                             <div key={r.id} className="flex items-center justify-between text-sm group pr-1">
@@ -1183,31 +1329,27 @@
                         </div>
                     </SidebarSection>
 
-                    <SidebarSection title="Columns" id="columns">
+                    <SidebarSection title="Columns" id="columns" isOpen={openSections.columns} onToggle={toggleSection}>
                         <div className="mt-2 space-y-1 max-h-60 overflow-y-auto">
-                           {columns.filter(c => c.key !== 'family_name').map(col => (
+                           {columns.map(col => (
                                 <label key={col.key} className="flex items-center text-sm p-1 hover:bg-gray-50 rounded">
                                     <input type="checkbox" checked={col.visible} onChange={() => handleColumnToggle(col.key)} className="mr-2 h-4 w-4 text-cyan-600 border-gray-300 rounded focus:ring-cyan-500"/>
-                                    <span className={col.isCustom ? 'italic' : ''}>{col.label === 'First Name' ? 'Name' : col.label}</span>
+                                    <span className={col.isCustom ? 'italic' : ''}>{col.label}</span>
                                 </label>
                             ))}
                         </div>
                     </SidebarSection>
                     
-                    <SidebarSection title="Purchase History" id="purchase">
+                    <SidebarSection title="Purchase History" id="purchase" isOpen={openSections.purchase} onToggle={toggleSection}>
                         <input type="text" value={purchaseSearch} onChange={e => setPurchaseSearch(e.target.value)} placeholder="Search items..." className="w-full px-2 py-1 border rounded-md text-sm mb-2"/>
                         <div className="max-h-60 overflow-y-auto">
                             {filteredItems.map(item => (
                                 <div key={item.id} className="flex items-center text-sm justify-between relative p-1">
                                     <span className="truncate">{item.item_data.name}</span>
-                                    <button onClick={() => setActivePopper(activePopper === item.id ? null : item.id)} className="ml-2 px-2 py-0.5 bg-gray-200 rounded hover:bg-gray-300">+</button>
-                                    {activePopper === item.id && (
-                                        <div className="absolute left-full ml-2 w-48 bg-white rounded-md shadow-lg z-20 p-2 border">
-                                            <button onClick={() => {onAddPurchaseColumn(item, 'yesNo'); setActivePopper(null);}} className="block w-full text-left text-sm p-1 hover:bg-gray-100">Purchased (Yes/No)</button>
-                                            <button onClick={() => {onAddPurchaseColumn(item, 'lastDate'); setActivePopper(null);}} className="block w-full text-left text-sm p-1 hover:bg-gray-100">Last Purchase Date</button>
-                                            <button onClick={() => {onAddPurchaseColumn(item, 'quantity'); setActivePopper(null);}} className="block w-full text-left text-sm p-1 hover:bg-gray-100">Total Quantity</button>
-                                        </div>
-                                    )}
+                                    <div>
+                                        <button onClick={() => setEditingFilter({ filter: { itemId: item.id, type: 'purchased', value: 'yes' }, index: null })} title="Filter by this item" className="ml-2 px-2 py-0.5 bg-blue-100 text-blue-700 rounded hover:bg-blue-200">Filter</button>
+                                        <button onClick={() => onAddOrUpdatePurchaseColumn(item, 'yesNo')} title="Add as column" className="ml-1 px-2 py-0.5 bg-gray-200 rounded hover:bg-gray-300">Column</button>
+                                    </div>
                                 </div>
                             ))}
                         </div>
@@ -1215,6 +1357,7 @@
                 </div>
                 {renameModal && <RenameModal report={renameModal} onRename={handleRename} onCancel={() => setRenameModal(null)} />}
                 {deleteModal && <DeleteModal report={deleteModal} onDelete={handleDelete} onCancel={() => setDeleteModal(null)} />}
+                {editingFilter && <PurchaseFilterModal item={catalogItems.find(i => i.id === editingFilter.filter.itemId)} onSave={handleSavePurchaseFilter} onCancel={() => setEditingFilter(null)} existingFilter={editingFilter.index !== null ? editingFilter.filter : null} />}
                 </>
             );
         }
@@ -1298,8 +1441,7 @@
             );
         }
 
-        function CustomerProfile({ customer, groupsMap, segmentsMap, customAttrDefs, apiFetch, onBack }) {
-            const [customAttrs, setCustomAttrs] = useState(customer.custom_attributes || {});
+        function CustomerProfile({ customer, groupsMap, segmentsMap, customAttrDefs, onBack }) {
             
             const formatAddress = (address) => {
                 if (!address) return 'N/A';
