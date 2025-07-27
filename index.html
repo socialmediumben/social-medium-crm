@@ -81,7 +81,7 @@
                             if (activeLocation) setLocationId(activeLocation.id);
                             else throw new Error("No active location found for this business.");
                             
-                            await fetchAllCustomers(customAttrData.custom_attribute_definitions);
+                            await fetchAllCustomers();
 
                         } catch (err) {
                             setError(err.message);
@@ -91,7 +91,7 @@
                         }
                     };
                     
-                    const fetchAllCustomers = async (definitions) => {
+                    const fetchAllCustomers = async () => {
                         setLoadingMessage('Fetching all customers...');
                         let fetchedCustomers = [];
                         let cursor = undefined;
@@ -104,30 +104,6 @@
                             cursor = data.cursor;
                         } while (cursor);
                         
-                        // Special handling to fetch "Kids Names" for the report table
-                        const kidsNamesDef = definitions?.find(def => def.name.toLowerCase() === 'kids names');
-                        if (kidsNamesDef && fetchedCustomers.length > 0) {
-                            setLoadingMessage('Fetching custom fields...');
-                            const customerIds = fetchedCustomers.map(c => c.id);
-                            const chunkSize = 30; // Bulk endpoint is limited
-                            let allAttributes = [];
-                            for (let i = 0; i < customerIds.length; i += chunkSize) {
-                                const chunk = customerIds.slice(i, i + chunkSize);
-                                const attrData = await apiFetch('/v2/customers/bulk-retrieve', {
-                                    method: 'POST',
-                                    body: JSON.stringify({ customer_ids: chunk })
-                                });
-                                if(attrData.customers) {
-                                   fetchedCustomers.forEach(c => {
-                                       const customerWithAttr = attrData.customers[c.id];
-                                       if(customerWithAttr && customerWithAttr.custom_attributes) {
-                                           c.custom_attributes = customerWithAttr.custom_attributes;
-                                       }
-                                   })
-                                }
-                            }
-                        }
-
                         fetchedCustomers.sort((a, b) => (a.given_name || '').localeCompare(b.given_name || ''));
                         setAllCustomers(fetchedCustomers);
                         setCustomers(fetchedCustomers);
@@ -209,9 +185,9 @@
 
                 switch(currentView) {
                     case 'profile':
-                        return customerDetails ? <CustomerProfile customer={customerDetails} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} /> : null;
+                        return customerDetails ? <CustomerProfile customer={customerDetails} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} apiFetch={apiFetch} /> : null;
                     case 'reports':
-                        return <ReportsPage allCustomers={allCustomers} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} onSelectCustomer={handleSelectCustomer} onBack={() => setCurrentView('dashboard')} />;
+                        return <ReportsPage allCustomers={allCustomers} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} onSelectCustomer={handleSelectCustomer} onBack={() => setCurrentView('dashboard')} apiFetch={apiFetch} />;
                     case 'dashboard':
                     default:
                         return <Dashboard onNavigate={setCurrentView} />;
@@ -309,43 +285,84 @@
             );
         }
         
-        function ReportsPage({ allCustomers, groupsMap, segmentsMap, customAttrDefs, onSelectCustomer, onBack }) {
+        function ReportsPage({ allCustomers, groupsMap, segmentsMap, customAttrDefs, onSelectCustomer, onBack, apiFetch }) {
             const getInitialColumns = () => {
                 const standardColumns = [
                     { key: 'given_name', label: 'First Name', visible: true, path: ['given_name'] },
                     { key: 'family_name', label: 'Last Name', visible: true, path: ['family_name'] },
                     { key: 'email_address', label: 'Email', visible: true, path: ['email_address'] },
                     { key: 'phone_number', label: 'Phone', visible: true, path: ['phone_number'] },
-                    { key: 'company_name', label: 'Company', visible: false, path: ['company_name'] },
-                    { key: 'address_1', label: 'Address 1', visible: false, path: ['address', 'address_line_1'] },
-                    { key: 'city', label: 'City', visible: false, path: ['address', 'locality'] },
-                    { key: 'birthday', label: 'Birthday', visible: false, path: ['birthday'] },
                     { key: 'created_at', label: 'Customer Since', visible: true, path: ['created_at'] },
                     { key: 'groups', label: 'Groups', visible: true, path: [] },
                 ];
                 
-                const kidsNamesDef = Array.from(customAttrDefs.values()).find(def => def.name.toLowerCase() === 'kids names');
-                if (kidsNamesDef) {
-                    standardColumns.push({ key: kidsNamesDef.key, label: 'Kids Names', visible: true, path: ['custom_attributes', kidsNamesDef.key, 'value'] });
-                }
-                return standardColumns;
+                const customColumns = Array.from(customAttrDefs.values()).map(def => ({
+                    key: def.key,
+                    label: def.name,
+                    visible: false,
+                    isCustom: true,
+                    path: ['custom_attributes', def.key, 'value']
+                }));
+
+                return [...standardColumns, ...customColumns];
             };
 
             const [columns, setColumns] = useState(getInitialColumns);
             const [isDropdownOpen, setIsDropdownOpen] = useState(false);
             const [filters, setFilters] = useState({});
             const [sortConfig, setSortConfig] = useState({ key: 'given_name', direction: 'ascending' });
+            const [customDataCache, setCustomDataCache] = useState({});
+            const [isFetchingCustom, setIsFetchingCustom] = useState(false);
             
             const visibleColumns = useMemo(() => columns.filter(c => c.visible), [columns]);
             const getNestedValue = (obj, path) => path.reduce((acc, part) => acc && acc[part], obj);
+
+            useEffect(() => {
+                const fetchVisibleCustomData = async () => {
+                    const newlyVisible = visibleColumns.filter(c => c.isCustom && !customDataCache[c.key]);
+                    if (newlyVisible.length === 0) return;
+
+                    setIsFetchingCustom(true);
+                    const customerIds = allCustomers.map(c => c.id);
+                    const chunkSize = 30;
+                    
+                    for (const col of newlyVisible) {
+                        let fetchedAttrs = {};
+                        for (let i = 0; i < customerIds.length; i += chunkSize) {
+                            const chunk = customerIds.slice(i, i + chunkSize);
+                            const attrData = await apiFetch('/v2/customers/bulk-retrieve', {
+                                method: 'POST',
+                                body: JSON.stringify({ customer_ids: chunk })
+                            });
+                            if (attrData.customers) {
+                                for(const id in attrData.customers) {
+                                    const customerWithAttr = attrData.customers[id];
+                                    if(customerWithAttr?.custom_attributes?.[col.key]) {
+                                        fetchedAttrs[id] = customerWithAttr.custom_attributes[col.key].value;
+                                    }
+                                }
+                            }
+                        }
+                        setCustomDataCache(prev => ({...prev, [col.key]: fetchedAttrs }));
+                    }
+                    setIsFetchingCustom(false);
+                };
+                fetchVisibleCustomData();
+            }, [visibleColumns]);
 
             const filteredAndSortedCustomers = useMemo(() => {
                 let sortableItems = [...allCustomers];
                 if (sortConfig.key !== null) {
                     sortableItems.sort((a, b) => {
                         const col = columns.find(c => c.key === sortConfig.key);
-                        const aVal = col.key === 'groups' ? '' : getNestedValue(a, col.path) || '';
-                        const bVal = col.key === 'groups' ? '' : getNestedValue(b, col.path) || '';
+                        let aVal, bVal;
+                        if (col.isCustom) {
+                            aVal = customDataCache[col.key]?.[a.id] || '';
+                            bVal = customDataCache[col.key]?.[b.id] || '';
+                        } else {
+                            aVal = col.key === 'groups' ? '' : getNestedValue(a, col.path) || '';
+                            bVal = col.key === 'groups' ? '' : getNestedValue(b, col.path) || '';
+                        }
                         if (aVal < bVal) return sortConfig.direction === 'ascending' ? -1 : 1;
                         if (aVal > bVal) return sortConfig.direction === 'ascending' ? 1 : -1;
                         return 0;
@@ -355,16 +372,18 @@
                     return visibleColumns.every(col => {
                         const filterValue = (filters[col.key] || '').toLowerCase();
                         if (!filterValue) return true;
-                        if (col.key === 'groups') {
-                            const customerGroups = [...(customer.group_ids || []).map(id => groupsMap.get(id) || ''), ...(customer.segment_ids || []).map(id => segmentsMap.get(id) || '')].join(' ').toLowerCase();
-                            return customerGroups.includes(filterValue);
+                        let customerValue;
+                        if (col.isCustom) {
+                            customerValue = (customDataCache[col.key]?.[customer.id] || '').toString().toLowerCase();
+                        } else if (col.key === 'groups') {
+                            customerValue = [...(customer.group_ids || []).map(id => groupsMap.get(id) || ''), ...(customer.segment_ids || []).map(id => segmentsMap.get(id) || '')].join(' ').toLowerCase();
                         } else {
-                            const customerValue = (getNestedValue(customer, col.path) || '').toString().toLowerCase();
-                            return customerValue.includes(filterValue);
+                            customerValue = (getNestedValue(customer, col.path) || '').toString().toLowerCase();
                         }
+                        return customerValue.includes(filterValue);
                     });
                 });
-            }, [allCustomers, filters, sortConfig, columns]);
+            }, [allCustomers, filters, sortConfig, columns, customDataCache]);
             
             const requestSort = (key) => {
                 let direction = 'ascending';
@@ -400,7 +419,7 @@
                                         {columns.map(col => (
                                             <label key={col.key} className="flex items-center px-4 py-2 text-sm text-gray-700">
                                                 <input type="checkbox" checked={col.visible} onChange={() => handleColumnToggle(col.key)} className="mr-2"/>
-                                                {col.label}
+                                                <span className={col.isCustom ? 'italic' : ''}>{col.label}</span>
                                             </label>
                                         ))}
                                     </div>
@@ -418,12 +437,14 @@
                                 <tr className="bg-gray-50">{visibleColumns.map(col => (<th key={col.key} className="p-2"><input type="text" placeholder="Filter..." onChange={e => handleFilterChange(e, col.key)} className="w-full px-2 py-1 border rounded-md text-xs"/></th>))}</tr>
                             </thead>
                             <tbody>
+                                {isFetchingCustom && <tr><td colSpan={visibleColumns.length} className="text-center p-4"><div className="flex items-center justify-center"><div className="spinner mr-2"></div>Fetching custom data...</div></td></tr>}
                                 {filteredAndSortedCustomers.map(customer => (
                                     <tr key={customer.id} className="bg-white border-b hover:bg-gray-50">
                                         {visibleColumns.map(col => (
                                             <td key={col.key} className="px-6 py-4">
                                                 {col.key === 'given_name' ? (<button onClick={() => onSelectCustomer(customer)} className="text-cyan-600 hover:underline font-medium whitespace-nowrap">{customer.given_name} {customer.family_name}</button>) 
                                                 : col.key === 'groups' ? (<div className="flex flex-wrap gap-1">{[...(customer.group_ids || []).map(id => groupsMap.get(id) || '...'), ...(customer.segment_ids || []).map(id => segmentsMap.get(id) || '...')].map((name, i) => <Pill key={i} text={name} />)}</div>) 
+                                                : col.isCustom ? (customDataCache[col.key]?.[customer.id] || 'N/A')
                                                 : col.path.includes('created_at') ? (formatDate(getNestedValue(customer, col.path))) 
                                                 : (getNestedValue(customer, col.path) || 'N/A')}
                                             </td>
@@ -437,7 +458,22 @@
             );
         }
 
-        function CustomerProfile({ customer, groupsMap, segmentsMap, customAttrDefs }) {
+        function CustomerProfile({ customer, groupsMap, segmentsMap, customAttrDefs, apiFetch }) {
+            const [customAttrs, setCustomAttrs] = useState({});
+            const [fetchingAttrs, setFetchingAttrs] = useState({});
+
+            const fetchAttribute = async (def) => {
+                setFetchingAttrs(prev => ({...prev, [def.key]: true}));
+                try {
+                    const attr = await apiFetch(`/v2/customers/${customer.id}/custom-attributes/${def.key}`);
+                    setCustomAttrs(prev => ({...prev, [def.key]: attr.custom_attribute?.value || 'N/A'}));
+                } catch (e) {
+                    setCustomAttrs(prev => ({...prev, [def.key]: 'Error'}));
+                } finally {
+                    setFetchingAttrs(prev => ({...prev, [def.key]: false}));
+                }
+            };
+            
             const formatDate = (dateString) => {
                 if (!dateString) return 'N/A';
                 return new Date(dateString).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: 'numeric' });
@@ -458,10 +494,16 @@
                         <InfoCard title="Details" className="md:col-span-2 lg:col-span-1"><InfoItem label="Birthday" value={customer.birthday} /><InfoItem label="Company" value={customer.company_name} /><InfoItem label="Reference ID" value={customer.reference_id} /></InfoCard>
                         <InfoCard title="Groups & Segments" className="md:col-span-3"><div className="flex flex-wrap gap-2">{(customer.group_ids || []).map(id => <Pill key={id} text={groupsMap.get(id) || id} />)}{(customer.segment_ids || []).map(id => <Pill key={id} text={segmentsMap.get(id) || id} color="bg-green-100 text-green-800" />)}</div></InfoCard>
                         <InfoCard title="Custom Fields" className="md:col-span-3">
-                            {Array.from(customAttrDefs.values()).map(def => {
-                                const attr = customer.custom_attributes?.[def.key];
-                                return attr ? <InfoItem key={def.key} label={def.name} value={attr.value} /> : null;
-                            })}
+                            {Array.from(customAttrDefs.values()).map(def => (
+                                <div key={def.key} className="flex justify-between items-center">
+                                    <InfoItem label={def.name} value={customAttrs[def.key]} />
+                                    {!customAttrs[def.key] && (
+                                        <button onClick={() => fetchAttribute(def)} disabled={fetchingAttrs[def.key]} className="px-3 py-1 text-xs bg-gray-200 rounded hover:bg-gray-300">
+                                            {fetchingAttrs[def.key] ? <div className="spinner"></div> : 'Fetch Data'}
+                                        </button>
+                                    )}
+                                </div>
+                            ))}
                         </InfoCard>
                         <InfoCard title="Notes" className="md:col-span-3"><p className="text-gray-700 whitespace-pre-wrap">{customer.note || 'No notes for this customer.'}</p></InfoCard>
                     </div>
