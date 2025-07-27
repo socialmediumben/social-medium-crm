@@ -117,7 +117,8 @@
             const [customAttrDefs, setCustomAttrDefs] = useState(new Map());
             const [catalogItems, setCatalogItems] = useState([]);
             const [locationId, setLocationId] = useState(null);
-            const [savedReports, setSavedReports] = useState([]);
+            const [personalReports, setPersonalReports] = useState([]);
+            const [publicReports, setPublicReports] = useState([]);
             const [dashboardWidgets, setDashboardWidgets] = useState([]);
             
             // View management
@@ -159,24 +160,29 @@
             useEffect(() => {
                 if (user) {
                     const userDocRef = db.collection('users').doc(user.uid);
+                    const publicReportsDocRef = db.collection('public').doc('reports');
                     
-                    const unsubscribe = userDocRef.onSnapshot(doc => {
+                    const unsubscribeUser = userDocRef.onSnapshot(doc => {
                         if (doc.exists) {
                             const data = doc.data();
                             setSquareAccessToken(data.squareAccessToken || null);
-                            setSavedReports(data.savedReports || []);
+                            setPersonalReports(data.savedReports || []);
                             setDashboardWidgets(data.dashboardWidgets || []);
                         } else {
-                            // First time user, create their document
-                            userDocRef.set({
-                                squareAccessToken: null,
-                                savedReports: [],
-                                dashboardWidgets: []
-                            });
+                            userDocRef.set({ squareAccessToken: null, savedReports: [], dashboardWidgets: [] });
                         }
                     });
 
-                    return () => unsubscribe();
+                    const unsubscribePublic = publicReportsDocRef.onSnapshot(doc => {
+                        if (doc.exists) {
+                            setPublicReports(doc.data().allReports || []);
+                        }
+                    });
+
+                    return () => {
+                        unsubscribeUser();
+                        unsubscribePublic();
+                    };
                 }
             }, [user]);
 
@@ -285,9 +291,14 @@
                 fetchDetails();
             };
 
-            const handleSaveReport = (report) => {
-                const newReports = [...savedReports, report];
-                db.collection('users').doc(user.uid).update({ savedReports: newReports });
+            const handleSaveReport = (report, isShared) => {
+                if (isShared) {
+                    const newReports = [...publicReports, report];
+                    db.collection('public').doc('reports').set({ allReports: newReports }, { merge: true });
+                } else {
+                    const newReports = [...personalReports, report];
+                    db.collection('users').doc(user.uid).update({ savedReports: newReports });
+                }
             };
 
             const handleSaveWidget = (report) => {
@@ -320,6 +331,8 @@
             if (!squareAccessToken) {
                 return <SettingsPage onSaveToken={handleSaveToken} userEmail={user.email} />;
             }
+            
+            const combinedReports = [...personalReports.map(r => ({...r, isPersonal: true})), ...publicReports];
 
             const renderMainContent = () => {
                 if (isLoading) return <div className="flex justify-center items-center h-full"><div className="spinner"></div><p className="ml-2">{loadingMessage}</p></div>;
@@ -329,7 +342,7 @@
                     case 'profile':
                         return customerDetails ? <CustomerProfile customer={customerDetails} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} apiFetch={apiFetch} onBack={() => setCurrentView('directory')} /> : null;
                     case 'reports':
-                        return <ReportsPage allCustomers={allCustomers} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} onSelectCustomer={handleSelectCustomer} onBack={() => setCurrentView('dashboard')} apiFetch={apiFetch} savedReports={savedReports} onSaveReport={handleSaveReport} onSaveWidget={handleSaveWidget} catalogItems={catalogItems} locationId={locationId} initialReport={reportToLoad} onInitialReportLoaded={() => setReportToLoad(null)} />;
+                        return <ReportsPage allCustomers={allCustomers} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} onSelectCustomer={handleSelectCustomer} onBack={() => setCurrentView('dashboard')} apiFetch={apiFetch} savedReports={combinedReports} onSaveReport={handleSaveReport} onSaveWidget={handleSaveWidget} catalogItems={catalogItems} locationId={locationId} initialReport={reportToLoad} onInitialReportLoaded={() => setReportToLoad(null)} />;
                     case 'directory':
                         return <DirectoryPage allCustomers={allCustomers} onSelectCustomer={handleSelectCustomer} onBack={() => setCurrentView('dashboard')} />;
                     case 'dashboard':
@@ -488,7 +501,6 @@
                         } else {
                             customerValue = (getNestedValue(customer, col.path) || 'N/A').toString();
                         }
-                        // After JSON stringify/parse, the Set becomes an object. We need to check for keys.
                         return filterConfig.values[customerValue];
                     });
                 });
@@ -715,12 +727,12 @@
                 return filtered;
             }, [allCustomers, filters, sortConfig, columns, purchaseDataCache]);
             
-            const handleModalSave = (name, isWidget) => {
+            const handleModalSave = (name, isWidget, isShared) => {
                 const report = { name, filters, sortConfig, columns, reportingPeriod };
                 if (isWidget) {
                     onSaveWidget(report);
                 }
-                onSaveReport(report); // Always save the report
+                onSaveReport(report, isShared);
                 setIsSaveModalOpen(false);
             };
             
@@ -1019,6 +1031,7 @@
         
         function SaveReportModal({ onSave, onCancel }) {
             const [name, setName] = useState('');
+            const [isShared, setIsShared] = useState(false);
 
             return (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-40">
@@ -1032,10 +1045,14 @@
                             className="w-full mt-4 px-3 py-2 border rounded-md"
                             placeholder="Report Name"
                         />
+                        <label className="flex items-center mt-4 text-sm">
+                            <input type="checkbox" checked={isShared} onChange={e => setIsShared(e.target.checked)} className="mr-2"/>
+                            Share with organization
+                        </label>
                         <div className="mt-6 flex justify-end space-x-2">
                             <button onClick={onCancel} className="px-4 py-2 bg-gray-200 rounded-md">Cancel</button>
-                            <button onClick={() => name && onSave(name, false)} className="px-4 py-2 bg-cyan-600 text-white rounded-md">Save Report</button>
-                            <button onClick={() => name && onSave(name, true)} className="px-4 py-2 bg-green-500 text-white rounded-md">Save and Add Widget</button>
+                            <button onClick={() => name && onSave(name, false, isShared)} className="px-4 py-2 bg-cyan-600 text-white rounded-md">Save Report</button>
+                            <button onClick={() => name && onSave(name, true, isShared)} className="px-4 py-2 bg-green-500 text-white rounded-md">Save and Add Widget</button>
                         </div>
                     </div>
                 </div>
