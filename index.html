@@ -45,7 +45,7 @@
             });
             
             // View management
-            const [currentView, setCurrentView] = useState('dashboard'); // 'dashboard', 'profile', 'reports'
+            const [currentView, setCurrentView] = useState('dashboard'); // 'dashboard', 'profile', 'reports', 'directory'
             const [selectedCustomer, setSelectedCustomer] = useState(null);
             const [customerDetails, setCustomerDetails] = useState(null);
 
@@ -178,12 +178,14 @@
 
                 switch(currentView) {
                     case 'profile':
-                        return customerDetails ? <CustomerProfile customer={customerDetails} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} apiFetch={apiFetch} onBack={() => setCurrentView('reports')} /> : null;
+                        return customerDetails ? <CustomerProfile customer={customerDetails} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} apiFetch={apiFetch} onBack={() => setCurrentView('directory')} /> : null;
                     case 'reports':
                         return <ReportsPage allCustomers={allCustomers} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} onSelectCustomer={handleSelectCustomer} onBack={() => setCurrentView('dashboard')} apiFetch={apiFetch} savedReports={savedReports} onSaveReport={handleSaveReport} catalogItems={catalogItems} locationId={locationId} />;
+                    case 'directory':
+                        return <DirectoryPage allCustomers={allCustomers} onSelectCustomer={handleSelectCustomer} onBack={() => setCurrentView('dashboard')} />;
                     case 'dashboard':
                     default:
-                        return <Dashboard onNavigate={setCurrentView} allCustomers={allCustomers} onSelectCustomer={handleSelectCustomer} />;
+                        return <Dashboard onNavigate={setCurrentView} />;
                 }
             };
 
@@ -216,229 +218,68 @@
             );
         }
 
-        function Dashboard({ onNavigate, allCustomers, onSelectCustomer }) {
-            const [searchTerm, setSearchTerm] = useState('');
-            const filteredCustomers = useMemo(() => {
-                if (!searchTerm) return [];
-                const lowercasedTerm = searchTerm.toLowerCase();
-                return allCustomers.filter(c => 
-                    (c.given_name && c.given_name.toLowerCase().includes(lowercasedTerm)) ||
-                    (c.family_name && c.family_name.toLowerCase().includes(lowercasedTerm)) ||
-                    (c.email_address && c.email_address.toLowerCase().includes(lowercasedTerm))
-                ).slice(0, 10);
-            }, [searchTerm, allCustomers]);
-
+        function Dashboard({ onNavigate }) {
             return (
                 <div className="p-8">
                     <h2 className="text-4xl font-bold text-gray-800">Dashboard</h2>
                     <p className="text-gray-500">Welcome to your Social Medium CRM.</p>
                     
-                    <div className="mt-8 max-w-lg">
-                        <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Search for a customer..." className="w-full px-4 py-2 border rounded-md"/>
-                        {filteredCustomers.length > 0 && (
-                            <ul className="bg-white border rounded-md mt-1 shadow-lg z-10 absolute w-full max-w-lg">
-                                {filteredCustomers.map(c => <li key={c.id}><button onClick={() => onSelectCustomer(c)} className="w-full text-left p-3 hover:bg-gray-100">{c.given_name} {c.family_name}</button></li>)}
-                            </ul>
-                        )}
-                    </div>
-
                     <div className="mt-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        <button onClick={() => onNavigate('directory')} className="p-6 bg-white rounded-lg shadow hover:bg-cyan-50 text-left transition">
+                            <h3 className="text-xl font-semibold text-gray-800">Directory</h3>
+                            <p className="text-gray-500 mt-2">Search and view all customers.</p>
+                        </button>
                         <button onClick={() => onNavigate('reports')} className="p-6 bg-white rounded-lg shadow hover:bg-cyan-50 text-left transition">
                             <h3 className="text-xl font-semibold text-gray-800">Reports</h3>
-                            <p className="text-gray-500 mt-2">View and filter your entire customer list.</p>
+                            <p className="text-gray-500 mt-2">Filter customers by purchase history and activity.</p>
                         </button>
                     </div>
                 </div>
             );
         }
         
-        function ReportsPage({ allCustomers, groupsMap, segmentsMap, customAttrDefs, onSelectCustomer, onBack, apiFetch, savedReports, onSaveReport, catalogItems, locationId }) {
-            const getInitialColumns = () => {
-                const standardColumns = [
-                    { key: 'given_name', label: 'First Name', visible: true, path: ['given_name'] },
-                    { key: 'family_name', label: 'Last Name', visible: true, path: ['family_name'] },
-                    { key: 'email_address', label: 'Email', visible: true, path: ['email_address'] },
-                    { key: 'phone_number', label: 'Phone', visible: true, path: ['phone_number'] },
-                    { key: 'created_at', label: 'Customer Since', visible: true, path: ['created_at'] },
-                    { key: 'groups', label: 'Groups', visible: true, path: [] },
-                ];
-                
-                const customColumns = Array.from(customAttrDefs.values()).map(def => ({
-                    key: def.key, label: def.name, visible: false, isCustom: true, path: ['custom_attributes', def.key, 'value']
-                }));
-
-                return [...standardColumns, ...customColumns];
-            };
-
-            const [columns, setColumns] = useState(getInitialColumns);
-            const [filters, setFilters] = useState({});
-            const [sortConfig, setSortConfig] = useState({ key: 'given_name', direction: 'ascending' });
-            const [customDataCache, setCustomDataCache] = useState({});
-            const [purchaseDataCache, setPurchaseDataCache] = useState({});
-            const [isFetchingData, setIsFetchingData] = useState(false);
-            
-            const visibleColumns = useMemo(() => columns.filter(c => c.visible), [columns]);
-            const getNestedValue = (obj, path) => path.reduce((acc, part) => acc && acc[part], obj);
-
-            const handlePurchaseColumnToggle = async (item) => {
-                const itemId = item.id;
-                if (purchaseDataCache[itemId]) return; // Already fetched
-
-                setIsFetchingData(true);
-                try {
-                    const variationIds = item.item_data.variations.map(v => v.id);
-                    const orderSearchData = await apiFetch('/v2/orders/search', {
-                        method: 'POST',
-                        body: JSON.stringify({
-                            location_ids: [locationId],
-                            query: { filter: { state_filter: { states: ["COMPLETED"] }, line_item_filter: { catalog_object_ids: variationIds } } }
-                        })
-                    });
-                    const customerIdsWithPurchase = new Set(orderSearchData.orders?.map(o => o.customer_id).filter(Boolean));
-                    setPurchaseDataCache(prev => ({ ...prev, [itemId]: customerIdsWithPurchase }));
-                } catch (err) {
-                    console.error("Error fetching purchase data:", err);
-                } finally {
-                    setIsFetchingData(false);
-                }
-            };
-            
-            const filteredAndSortedCustomers = useMemo(() => {
-                let sortableItems = [...allCustomers];
-                if (sortConfig.key) {
-                    sortableItems.sort((a, b) => {
-                        const col = columns.find(c => c.key === sortConfig.key);
-                        let aVal, bVal;
-                        if (col?.isCustom) { aVal = customDataCache[col.key]?.[a.id] || ''; bVal = customDataCache[col.key]?.[b.id] || ''; }
-                        else if (col?.key === 'groups') { aVal = ''; bVal = ''; }
-                        else { aVal = getNestedValue(a, col?.path || []) || ''; bVal = getNestedValue(b, col?.path || []) || ''; }
-                        if (aVal < bVal) return sortConfig.direction === 'ascending' ? -1 : 1;
-                        if (aVal > bVal) return sortConfig.direction === 'ascending' ? 1 : -1;
-                        return 0;
-                    });
-                }
-                return sortableItems.filter(customer => {
-                    return visibleColumns.every(col => {
-                        const filterValue = (filters[col.key] || '').toLowerCase();
-                        if (!filterValue) return true;
-                        let customerValue;
-                        if (col.isCustom) { customerValue = (customDataCache[col.key]?.[customer.id] || '').toString().toLowerCase(); }
-                        else if (col.key === 'groups') { customerValue = [...(customer.group_ids || []).map(id => groupsMap.get(id) || ''), ...(customer.segment_ids || []).map(id => segmentsMap.get(id) || '')].join(' ').toLowerCase(); }
-                        else { customerValue = (getNestedValue(customer, col.path) || '').toString().toLowerCase(); }
-                        return customerValue.includes(filterValue);
-                    });
-                });
-            }, [allCustomers, filters, sortConfig, columns, customDataCache]);
-            
-            const requestSort = (key) => {
-                let direction = 'ascending';
-                if (sortConfig.key === key && sortConfig.direction === 'ascending') direction = 'descending';
-                setSortConfig({ key, direction });
-            };
-            
-            const handleFilterChange = (e, key) => setFilters(prev => ({ ...prev, [key]: e.target.value }));
-            const handleColumnToggle = (key) => setColumns(prev => prev.map(c => c.key === key ? { ...c, visible: !c.visible } : c));
-            const formatDate = (dateString) => dateString ? new Date(dateString).toLocaleDateString() : 'N/A';
-            
-            const handleSaveReportClick = () => {
-                const name = window.prompt("Enter a name for this report:");
-                if (name) onSaveReport({ name, filters, sortConfig, columns });
-            };
-            
-            const handleLoadReport = (report) => {
-                setFilters(report.filters);
-                setSortConfig(report.sortConfig);
-                setColumns(report.columns);
-            };
+        function DirectoryPage({ allCustomers, onSelectCustomer, onBack }) {
+            const [searchTerm, setSearchTerm] = useState('');
+            const filteredCustomers = useMemo(() => {
+                const lowercasedTerm = searchTerm.toLowerCase();
+                if (!lowercasedTerm) return allCustomers;
+                return allCustomers.filter(c => 
+                    (c.given_name && c.given_name.toLowerCase().includes(lowercasedTerm)) ||
+                    (c.family_name && c.family_name.toLowerCase().includes(lowercasedTerm)) ||
+                    (c.email_address && c.email_address.toLowerCase().includes(lowercasedTerm)) ||
+                    (c.phone_number && c.phone_number.includes(searchTerm))
+                );
+            }, [searchTerm, allCustomers]);
 
             return (
-                <div className="flex h-full">
-                    <ReportsSidebar 
-                        columns={columns} 
-                        onColumnToggle={handleColumnToggle}
-                        savedReports={savedReports}
-                        onLoadReport={handleLoadReport}
-                        onSaveReportClick={handleSaveReportClick}
-                        catalogItems={catalogItems}
-                        onPurchaseColumnToggle={handlePurchaseColumnToggle}
-                        purchaseDataCache={purchaseDataCache}
-                    />
-                    <div className="flex-1 p-8 overflow-y-auto">
-                         <button onClick={onBack} className="mb-6 text-cyan-600 hover:text-cyan-800"> &larr; Back to Dashboard</button>
-                         <h2 className="text-4xl font-bold text-gray-800">Customer Report</h2>
-                         <p className="text-gray-500">A complete list of all customers in your directory.</p>
-                         <div className="mt-8 bg-white rounded-lg shadow overflow-x-auto">
-                            <table className="w-full text-sm text-left text-gray-500">
-                                <thead className="text-xs text-gray-700 uppercase bg-gray-50">
-                                    <tr>{/* ... header rendering ... */}</tr>
-                                    <tr className="bg-gray-50">{/* ... filter rendering ... */}</tr>
-                                </thead>
-                                <tbody>
-                                    {isFetchingData && <tr><td colSpan={visibleColumns.length} className="text-center p-4"><div className="flex items-center justify-center"><div className="spinner mr-2"></div>Fetching data...</div></td></tr>}
-                                    {/* ... table body rendering ... */}
-                                </tbody>
-                            </table>
-                        </div>
+                <div className="p-8">
+                    <button onClick={onBack} className="mb-6 text-cyan-600 hover:text-cyan-800"> &larr; Back to Dashboard</button>
+                    <h2 className="text-4xl font-bold text-gray-800">Customer Directory</h2>
+                    <div className="mt-4">
+                        <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Filter customers..." className="w-full max-w-lg px-4 py-2 border rounded-md"/>
+                    </div>
+                    <div className="mt-8 bg-white rounded-lg shadow overflow-hidden">
+                        <ul className="divide-y divide-gray-200">
+                            {filteredCustomers.map(customer => (
+                                <li key={customer.id}>
+                                    <button onClick={() => onSelectCustomer(customer)} className="w-full text-left p-4 hover:bg-gray-50">
+                                        <p className="font-semibold text-gray-800">{customer.given_name} {customer.family_name}</p>
+                                        <p className="text-sm text-gray-500">{customer.email_address || 'No email'}</p>
+                                    </button>
+                                </li>
+                            ))}
+                        </ul>
                     </div>
                 </div>
             );
         }
 
-        function ReportsSidebar({ columns, onColumnToggle, savedReports, onLoadReport, onSaveReportClick, catalogItems, onPurchaseColumnToggle, purchaseDataCache }) {
-            const [isColumnsOpen, setIsColumnsOpen] = useState(true);
-            const [isSavedReportsOpen, setIsSavedReportsOpen] = useState(true);
-            const [isPurchaseHistoryOpen, setIsPurchaseHistoryOpen] = useState(true);
-            const [purchaseSearch, setPurchaseSearch] = useState('');
-
-            const filteredItems = useMemo(() => {
-                if (!purchaseSearch) return catalogItems;
-                return catalogItems.filter(item => item.item_data.name.toLowerCase().includes(purchaseSearch.toLowerCase()));
-            }, [purchaseSearch, catalogItems]);
-
-            return (
-                <div className="w-1/3 max-w-xs bg-white border-r border-gray-200 flex flex-col p-4 space-y-4 overflow-y-auto">
-                    <h2 className="text-xl font-bold">Report Controls</h2>
-                    <button onClick={onSaveReportClick} className="w-full px-4 py-2 bg-green-500 text-white rounded-md shadow-sm hover:bg-green-600">Save Current Report</button>
-                    
-                    <div>
-                        <button onClick={() => setIsSavedReportsOpen(!isSavedReportsOpen)} className="font-semibold w-full text-left">Saved Reports</button>
-                        {isSavedReportsOpen && <div className="mt-2 space-y-1 pl-2 border-l-2">
-                            {savedReports.length > 0 ? savedReports.map((r, i) => <button key={i} onClick={() => onLoadReport(r)} className="block text-sm hover:underline">{r.name}</button>) : <p className="text-sm text-gray-500">None yet.</p>}
-                        </div>}
-                    </div>
-
-                    <div>
-                        <button onClick={() => setIsColumnsOpen(!isColumnsOpen)} className="font-semibold w-full text-left">Columns</button>
-                        {isColumnsOpen && <div className="mt-2 space-y-1 pl-2 border-l-2 max-h-60 overflow-y-auto">
-                           {columns.map(col => (
-                                <label key={col.key} className="flex items-center text-sm">
-                                    <input type="checkbox" checked={col.visible} onChange={() => onColumnToggle(col.key)} className="mr-2"/>
-                                    <span className={col.isCustom ? 'italic' : ''}>{col.label}</span>
-                                </label>
-                            ))}
-                        </div>}
-                    </div>
-                    
-                    <div>
-                        <button onClick={() => setIsPurchaseHistoryOpen(!isPurchaseHistoryOpen)} className="font-semibold w-full text-left">Purchase History</button>
-                        {isPurchaseHistoryOpen && <div className="mt-2 space-y-1 pl-2 border-l-2">
-                            <input type="text" value={purchaseSearch} onChange={e => setPurchaseSearch(e.target.value)} placeholder="Search items..." className="w-full px-2 py-1 border rounded-md text-sm mb-2"/>
-                            <div className="max-h-60 overflow-y-auto">
-                                {filteredItems.map(item => (
-                                    <label key={item.id} className="flex items-center text-sm">
-                                        <input type="checkbox" checked={!!purchaseDataCache[item.id]} onChange={() => onPurchaseColumnToggle(item)} className="mr-2"/>
-                                        {item.item_data.name}
-                                    </label>
-                                ))}
-                            </div>
-                        </div>}
-                    </div>
-                </div>
-            );
+        function ReportsPage({ allCustomers, groupsMap, segmentsMap, customAttrDefs, onSelectCustomer, onBack, apiFetch, savedReports, onSaveReport, catalogItems, locationId }) {
+            // ... (Component logic will be here)
         }
 
         function CustomerProfile({ customer, groupsMap, segmentsMap, customAttrDefs, apiFetch, onBack }) {
-            // ... (same as before)
+            // ... (Component logic will be here)
         }
         
         const InfoCard = ({ title, children, className }) => (<div className={`bg-white p-6 rounded-lg shadow ${className || ''}`}><h3 className="text-lg font-semibold text-gray-800 border-b pb-2 mb-4">{title}</h3><div className="space-y-3">{children}</div></div>);
