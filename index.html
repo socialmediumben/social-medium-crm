@@ -162,12 +162,22 @@
                     const userDocRef = db.collection('users').doc(user.uid);
                     const publicReportsDocRef = db.collection('public').doc('reports');
                     
+                    const deserializeReports = (reports = []) => {
+                        return reports.map(report => ({
+                            ...report,
+                            filters: Object.entries(report.filters).reduce((acc, [key, val]) => {
+                                acc[key] = { ...val, values: new Set(val.values) };
+                                return acc;
+                            }, {})
+                        }));
+                    };
+
                     const unsubscribeUser = userDocRef.onSnapshot(doc => {
                         if (doc.exists) {
                             const data = doc.data();
                             setSquareAccessToken(data.squareAccessToken || null);
-                            setPersonalReports(data.savedReports || []);
-                            setDashboardWidgets(data.dashboardWidgets || []);
+                            setPersonalReports(deserializeReports(data.savedReports));
+                            setDashboardWidgets(deserializeReports(data.dashboardWidgets));
                         } else {
                             userDocRef.set({ squareAccessToken: null, savedReports: [], dashboardWidgets: [] });
                         }
@@ -175,7 +185,7 @@
 
                     const unsubscribePublic = publicReportsDocRef.onSnapshot(doc => {
                         if (doc.exists) {
-                            setPublicReports(doc.data().allReports || []);
+                            setPublicReports(deserializeReports(doc.data().allReports));
                         }
                     });
 
@@ -290,20 +300,46 @@
                 
                 fetchDetails();
             };
+            
+            const serializeReport = (report) => {
+                const serializedFilters = {};
+                if (report.filters) {
+                    for (const key in report.filters) {
+                        const filterConfig = report.filters[key];
+                        serializedFilters[key] = {
+                            ...filterConfig,
+                            values: Array.from(filterConfig.values || [])
+                        };
+                    }
+                }
+                return { ...report, filters: serializedFilters };
+            };
 
             const handleSaveReport = (report, isShared) => {
+                const serializedReport = serializeReport(report);
                 if (isShared) {
-                    const newReports = [...publicReports, report];
-                    db.collection('public').doc('reports').set({ allReports: newReports }, { merge: true });
+                    const publicReportsDocRef = db.collection('public').doc('reports');
+                    publicReportsDocRef.update({
+                        allReports: firebase.firestore.FieldValue.arrayUnion(serializedReport)
+                    }).catch(err => {
+                        if (err.code === 'not-found') {
+                            publicReportsDocRef.set({ allReports: [serializedReport] });
+                        }
+                    });
                 } else {
-                    const newReports = [...personalReports, report];
-                    db.collection('users').doc(user.uid).update({ savedReports: newReports });
+                    const userDocRef = db.collection('users').doc(user.uid);
+                    userDocRef.update({
+                        savedReports: firebase.firestore.FieldValue.arrayUnion(serializedReport)
+                    });
                 }
             };
 
             const handleSaveWidget = (report) => {
-                const newWidgets = [...dashboardWidgets, report];
-                db.collection('users').doc(user.uid).update({ dashboardWidgets: newWidgets });
+                const serializedReport = serializeReport(report);
+                const userDocRef = db.collection('users').doc(user.uid);
+                userDocRef.update({
+                    dashboardWidgets: firebase.firestore.FieldValue.arrayUnion(serializedReport)
+                });
             };
             
             const handleNavigate = (view, payload = null) => {
@@ -490,7 +526,7 @@
                 
                 return customers.filter(customer => {
                     return Object.entries(widget.filters).every(([key, filterConfig]) => {
-                        if (!filterConfig || !filterConfig.values || Object.keys(filterConfig.values).length === 0) return true;
+                        if (!filterConfig || !filterConfig.values || filterConfig.values.size === 0) return true;
                         
                         const col = widget.columns.find(c => c.key === key);
                         if (!col || col.isPurchase) return true;
@@ -501,7 +537,7 @@
                         } else {
                             customerValue = (getNestedValue(customer, col.path) || 'N/A').toString();
                         }
-                        return filterConfig.values[customerValue];
+                        return filterConfig.values.has(customerValue);
                     });
                 });
             }, [widget, allCustomers, groupsMap, segmentsMap]);
@@ -988,7 +1024,7 @@
                     <div>
                         <button onClick={() => setIsSavedReportsOpen(!isSavedReportsOpen)} className="font-semibold w-full text-left flex justify-between items-center">Saved Reports <span>{isSavedReportsOpen ? '−' : '+'}</span></button>
                         {isSavedReportsOpen && <div className="mt-2 space-y-1 pl-2 border-l-2">
-                            {savedReports.length > 0 ? savedReports.map((r, i) => <button key={i} onClick={() => onLoadReport(r)} className="block text-sm hover:underline">{r.name}</button>) : <p className="text-sm text-gray-500">None yet.</p>}
+                            {savedReports.map((r, i) => <button key={i} onClick={() => onLoadReport(r)} className="block text-sm hover:underline">{r.name} {r.isPersonal ? '' : '(Shared)'}</button>)}
                         </div>}
                     </div>
 
