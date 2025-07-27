@@ -140,7 +140,6 @@
                 return data;
             };
             
-            // Handle user authentication state and redirect results
             useEffect(() => {
                 auth.getRedirectResult().catch(err => {
                     console.error("Error processing redirect result:", err);
@@ -156,7 +155,6 @@
                 return () => unsubscribe();
             }, []);
 
-            // Fetch user-specific data (token, reports) from Firestore
             useEffect(() => {
                 if (user) {
                     const userDocRef = db.collection('users').doc(user.uid);
@@ -196,7 +194,6 @@
                 }
             }, [user]);
 
-            // Fetch Square data once the token is loaded
             useEffect(() => {
                 if (squareAccessToken) {
                     const fetchInitialData = async () => {
@@ -316,7 +313,8 @@
             };
 
             const handleSaveReport = (report, isShared) => {
-                const serializedReport = serializeReport(report);
+                const reportWithId = { ...report, id: report.id || crypto.randomUUID() };
+                const serializedReport = serializeReport(reportWithId);
                 if (isShared) {
                     const publicReportsDocRef = db.collection('public').doc('reports');
                     publicReportsDocRef.update({
@@ -333,9 +331,36 @@
                     });
                 }
             };
+            
+            const handleRenameReport = (reportId, newName, isPersonal) => {
+                const updateLogic = (reports) => reports.map(r => r.id === reportId ? { ...r, name: newName } : r);
+                
+                if (isPersonal) {
+                    const updatedReports = updateLogic(personalReports);
+                    db.collection('users').doc(user.uid).update({ savedReports: updatedReports.map(serializeReport) });
+                    const updatedWidgets = dashboardWidgets.map(w => w.id === reportId ? { ...w, name: newName } : w);
+                    db.collection('users').doc(user.uid).update({ dashboardWidgets: updatedWidgets.map(serializeReport) });
+                } else {
+                    const updatedReports = updateLogic(publicReports);
+                    db.collection('public').doc('reports').set({ allReports: updatedReports.map(serializeReport) });
+                }
+            };
+
+            const handleDeleteReport = (reportId, isPersonal) => {
+                if (isPersonal) {
+                    const updatedReports = personalReports.filter(r => r.id !== reportId);
+                    db.collection('users').doc(user.uid).update({ savedReports: updatedReports.map(serializeReport) });
+                    const updatedWidgets = dashboardWidgets.filter(w => w.id !== reportId);
+                    db.collection('users').doc(user.uid).update({ dashboardWidgets: updatedWidgets.map(serializeReport) });
+                } else {
+                    const updatedReports = publicReports.filter(r => r.id !== reportId);
+                    db.collection('public').doc('reports').set({ allReports: updatedReports.map(serializeReport) });
+                }
+            };
 
             const handleSaveWidget = (report) => {
-                const serializedReport = serializeReport(report);
+                const reportWithId = { ...report, id: report.id || crypto.randomUUID() };
+                const serializedReport = serializeReport(reportWithId);
                 const userDocRef = db.collection('users').doc(user.uid);
                 userDocRef.update({
                     dashboardWidgets: firebase.firestore.FieldValue.arrayUnion(serializedReport)
@@ -378,7 +403,7 @@
                     case 'profile':
                         return customerDetails ? <CustomerProfile customer={customerDetails} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} apiFetch={apiFetch} onBack={() => setCurrentView('directory')} /> : null;
                     case 'reports':
-                        return <ReportsPage allCustomers={allCustomers} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} onSelectCustomer={handleSelectCustomer} onBack={() => setCurrentView('dashboard')} apiFetch={apiFetch} savedReports={combinedReports} onSaveReport={handleSaveReport} onSaveWidget={handleSaveWidget} catalogItems={catalogItems} locationId={locationId} initialReport={reportToLoad} onInitialReportLoaded={() => setReportToLoad(null)} />;
+                        return <ReportsPage allCustomers={allCustomers} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} onSelectCustomer={handleSelectCustomer} onBack={() => setCurrentView('dashboard')} apiFetch={apiFetch} savedReports={combinedReports} onSaveReport={handleSaveReport} onSaveWidget={handleSaveWidget} onRenameReport={handleRenameReport} onDeleteReport={handleDeleteReport} catalogItems={catalogItems} locationId={locationId} initialReport={reportToLoad} onInitialReportLoaded={() => setReportToLoad(null)} />;
                     case 'directory':
                         return <DirectoryPage allCustomers={allCustomers} onSelectCustomer={handleSelectCustomer} onBack={() => setCurrentView('dashboard')} />;
                     case 'dashboard':
@@ -600,7 +625,7 @@
             );
         }
 
-        function ReportsPage({ allCustomers, groupsMap, segmentsMap, customAttrDefs, onSelectCustomer, onBack, apiFetch, savedReports, onSaveReport, onSaveWidget, catalogItems, locationId, initialReport, onInitialReportLoaded }) {
+        function ReportsPage({ allCustomers, groupsMap, segmentsMap, customAttrDefs, onSelectCustomer, onBack, apiFetch, savedReports, onSaveReport, onSaveWidget, onRenameReport, onDeleteReport, catalogItems, locationId, initialReport, onInitialReportLoaded }) {
             const getInitialColumns = () => {
                 const standardColumns = [
                     { key: 'given_name', label: 'First Name', visible: true, path: ['given_name'] },
@@ -798,6 +823,8 @@
                         onAddPurchaseColumn={handleAddPurchaseColumn}
                         reportingPeriod={reportingPeriod}
                         setReportingPeriod={setReportingPeriod}
+                        onRenameReport={onRenameReport}
+                        onDeleteReport={onDeleteReport}
                     />
                     <div className="flex-1 p-8 overflow-y-auto">
                          <div className="flex justify-between items-center mb-6">
@@ -959,7 +986,7 @@
             );
         }
 
-        function ReportsSidebar({ columns, setColumns, savedReports, onLoadReport, onSaveReportClick, catalogItems, onAddPurchaseColumn, reportingPeriod, setReportingPeriod }) {
+        function ReportsSidebar({ columns, setColumns, savedReports, onLoadReport, onSaveReportClick, catalogItems, onAddPurchaseColumn, reportingPeriod, setReportingPeriod, onRenameReport, onDeleteReport }) {
             const [isColumnsOpen, setIsColumnsOpen] = useState(true);
             const [isSavedReportsOpen, setIsSavedReportsOpen] = useState(true);
             const [isPurchaseHistoryOpen, setIsPurchaseHistoryOpen] = useState(true);
@@ -986,6 +1013,19 @@
                     setReportingPeriod({ ...reportingPeriod, relative: 'custom' });
                 } else {
                     setReportingPeriod({ start: '', end: '', relative: period });
+                }
+            };
+            
+            const handleRename = (report) => {
+                const newName = prompt("Enter new name for the report:", report.name);
+                if (newName) {
+                    onRenameReport(report.id, newName, report.isPersonal);
+                }
+            };
+
+            const handleDelete = (report) => {
+                if (window.confirm(`Are you sure you want to delete the report "${report.name}"?`)) {
+                    onDeleteReport(report.id, report.isPersonal);
                 }
             };
 
@@ -1024,7 +1064,15 @@
                     <div>
                         <button onClick={() => setIsSavedReportsOpen(!isSavedReportsOpen)} className="font-semibold w-full text-left flex justify-between items-center">Saved Reports <span>{isSavedReportsOpen ? '−' : '+'}</span></button>
                         {isSavedReportsOpen && <div className="mt-2 space-y-1 pl-2 border-l-2">
-                            {savedReports.map((r, i) => <button key={i} onClick={() => onLoadReport(r)} className="block text-sm hover:underline">{r.name} {r.isPersonal ? '' : '(Shared)'}</button>)}
+                            {savedReports.map((r, i) => (
+                                <div key={i} className="flex items-center justify-between text-sm group">
+                                    <button onClick={() => onLoadReport(r)} className="hover:underline">{r.name} {r.isPersonal ? '' : '(Shared)'}</button>
+                                    <div className="hidden group-hover:flex items-center">
+                                        <button onClick={() => handleRename(r)} className="p-1 hover:bg-gray-200 rounded">✏️</button>
+                                        <button onClick={() => handleDelete(r)} className="p-1 hover:bg-gray-200 rounded">🗑️</button>
+                                    </div>
+                                </div>
+                            ))}
                         </div>}
                     </div>
 
