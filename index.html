@@ -139,8 +139,15 @@
                 return data;
             };
             
-            // Handle user authentication state
+            // Handle user authentication state and redirect results
             useEffect(() => {
+                auth.getRedirectResult().catch(err => {
+                    console.error("Error processing redirect result:", err);
+                    if (err.code !== 'auth/operation-not-supported-in-this-environment') {
+                       setError(err.message);
+                    }
+                });
+
                 const unsubscribe = auth.onAuthStateChanged(user => {
                     setUser(user);
                     setAuthLoading(false);
@@ -363,7 +370,6 @@
             const handleGoogleSignIn = async () => {
                 const provider = new firebase.auth.GoogleAuthProvider();
                 try {
-                    // UPDATED: Use signInWithRedirect instead of signInWithPopup
                     await auth.signInWithRedirect(provider);
                 } catch (err) {
                     setError(err.message);
@@ -471,7 +477,7 @@
                 
                 return customers.filter(customer => {
                     return Object.entries(widget.filters).every(([key, filterConfig]) => {
-                        if (!filterConfig || !filterConfig.values || filterConfig.values.size === 0) return true;
+                        if (!filterConfig || !filterConfig.values || Object.keys(filterConfig.values).length === 0) return true;
                         
                         const col = widget.columns.find(c => c.key === key);
                         if (!col || col.isPurchase) return true;
@@ -482,7 +488,8 @@
                         } else {
                             customerValue = (getNestedValue(customer, col.path) || 'N/A').toString();
                         }
-                        return filterConfig.values.has(customerValue);
+                        // After JSON stringify/parse, the Set becomes an object. We need to check for keys.
+                        return filterConfig.values[customerValue];
                     });
                 });
             }, [widget, allCustomers, groupsMap, segmentsMap]);
