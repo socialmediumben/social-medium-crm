@@ -6,11 +6,9 @@
     <title>Social Medium CRM</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-    <!-- React and Babel -->
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <!-- Firebase SDKs -->
     <script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-firestore-compat.js"></script>
@@ -313,6 +311,7 @@
             const handleSaveReport = (report, isWidget, isShared) => {
                 const reportWithId = { ...report, id: report.id || crypto.randomUUID(), isWidget };
                 const serializedReport = serializeReport(reportWithId);
+
                 if (isShared) {
                     const publicReportsDocRef = db.collection('public').doc('reports');
                     publicReportsDocRef.update({
@@ -320,12 +319,18 @@
                     }).catch(err => {
                         if (err.code === 'not-found') {
                             publicReportsDocRef.set({ allReports: [serializedReport] });
+                        } else {
+                           console.error("Error saving shared report:", err);
+                           setError("Could not save shared report.");
                         }
                     });
                 } else {
                     const userDocRef = db.collection('users').doc(user.uid);
                     userDocRef.update({
                         savedReports: firebase.firestore.FieldValue.arrayUnion(serializedReport)
+                    }).catch(err => {
+                        console.error("Error saving personal report:", err);
+                        setError("Could not save personal report.");
                     });
                 }
             };
@@ -344,11 +349,21 @@
 
             const handleDeleteReport = (reportId, isPersonal) => {
                 if (isPersonal) {
-                    const updatedReports = personalReports.filter(r => r.id !== reportId);
-                    db.collection('users').doc(user.uid).update({ savedReports: updatedReports.map(serializeReport) });
+                    const userDocRef = db.collection('users').doc(user.uid);
+                    const reportToDelete = personalReports.find(r => r.id === reportId);
+                    if(reportToDelete) {
+                        userDocRef.update({
+                            savedReports: firebase.firestore.FieldValue.arrayRemove(serializeReport(reportToDelete))
+                        });
+                    }
                 } else {
-                    const updatedReports = publicReports.filter(r => r.id !== reportId);
-                    db.collection('public').doc('reports').set({ allReports: updatedReports.map(serializeReport) });
+                    const publicReportsDocRef = db.collection('public').doc('reports');
+                    const reportToDelete = publicReports.find(r => r.id === reportId);
+                     if(reportToDelete) {
+                        publicReportsDocRef.update({
+                            allReports: firebase.firestore.FieldValue.arrayRemove(serializeReport(reportToDelete))
+                        });
+                    }
                 }
             };
             
@@ -378,16 +393,16 @@
                 return <SettingsPage onSaveToken={handleSaveToken} userEmail={user.email} />;
             }
             
-            const combinedReports = [...personalReports.map(r => ({...r, isPersonal: true})), ...publicReports];
+            const combinedReports = [...personalReports.map(r => ({...r, isPersonal: true})), ...publicReports.map(r => ({...r, isPersonal: false}))];
             const widgets = combinedReports.filter(r => r.isWidget);
 
             const renderMainContent = () => {
                 if (isLoading) return <div className="flex justify-center items-center h-full"><div className="spinner"></div><p className="ml-2">{loadingMessage}</p></div>;
-                if (error) return <div className="text-red-500 text-center">{error}</div>;
+                if (error) return <div className="p-4 m-4 bg-red-100 text-red-700 rounded-md text-center">{error}</div>;
 
                 switch(currentView) {
                     case 'profile':
-                        return customerDetails ? <CustomerProfile customer={customerDetails} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} apiFetch={apiFetch} onBack={() => setCurrentView('directory')} /> : null;
+                        return customerDetails ? <CustomerProfile customer={customerDetails} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} apiFetch={apiFetch} onBack={() => setCurrentView('directory')} /> : <div className="flex justify-center items-center h-full"><div className="spinner"></div></div>;
                     case 'reports':
                         return <ReportsPage allCustomers={allCustomers} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} onSelectCustomer={handleSelectCustomer} onBack={() => setCurrentView('dashboard')} apiFetch={apiFetch} savedReports={combinedReports} onSaveReport={handleSaveReport} onRenameReport={handleRenameReport} onDeleteReport={handleDeleteReport} catalogItems={catalogItems} locationId={locationId} initialReport={reportToLoad} onInitialReportLoaded={() => setReportToLoad(null)} />;
                     case 'directory':
@@ -401,7 +416,7 @@
             return (
                 <div className="h-screen flex flex-col">
                     <Toolbar onNavigate={handleNavigate} />
-                    <main className="flex-1 overflow-y-auto">
+                    <main className="flex-1 overflow-y-auto bg-gray-50">
                         {renderMainContent()}
                     </main>
                 </div>
@@ -540,31 +555,22 @@
         function DashboardWidget({ widget, allCustomers, groupsMap, segmentsMap, onSelectCustomer, onWidgetClick }) {
              const filteredCustomers = useMemo(() => {
                 let customers = [...allCustomers];
-                if (widget.reportingPeriod?.relative && widget.reportingPeriod.relative !== 'all') {
-                    const { start, end } = getRelativeDateRange(widget.reportingPeriod.relative);
-                     if (start && end) {
-                        const startDate = new Date(start);
-                        const endDate = new Date(end);
-                        customers = customers.filter(c => {
-                            const createdAt = new Date(c.created_at);
-                            return createdAt >= startDate && createdAt <= endDate;
-                        });
-                    }
-                }
-                
+                // Note: Widget filtering logic might need refinement based on saved report structure
+                // This is a basic implementation
                 return customers.filter(customer => {
                     return Object.entries(widget.filters).every(([key, filterConfig]) => {
                         if (!filterConfig || !filterConfig.values || filterConfig.values.size === 0) return true;
                         
                         const col = widget.columns.find(c => c.key === key);
-                        if (!col || col.isPurchase) return true;
+                        if (!col || col.isPurchase) return true; // Purchase history filtering on dashboard widgets can be complex, skipping for now
                         
                         let customerValue;
                         if (col.key === 'groups') {
-                            customerValue = [...(customer.group_ids || []).map(id => groupsMap.get(id) || ''), ...(customer.segment_ids || []).map(id => segmentsMap.get(id) || '')].join(', ');
+                             customerValue = [...(customer.group_ids || []).map(id => groupsMap.get(id)), ...(customer.segment_ids || []).map(id => segmentsMap.get(id))].filter(Boolean).join(', ');
                         } else {
                             customerValue = (getNestedValue(customer, col.path) || 'N/A').toString();
                         }
+                        
                         return filterConfig.values.has(customerValue);
                     });
                 });
@@ -628,7 +634,7 @@
             );
         }
 
-        function ReportsPage({ allCustomers, groupsMap, segmentsMap, customAttrDefs, onSelectCustomer, onBack, apiFetch, savedReports, onSaveReport, onSaveWidget, onRenameReport, onDeleteReport, catalogItems, locationId, initialReport, onInitialReportLoaded }) {
+        function ReportsPage({ allCustomers, groupsMap, segmentsMap, customAttrDefs, onSelectCustomer, onBack, apiFetch, savedReports, onSaveReport, onRenameReport, onDeleteReport, catalogItems, locationId, initialReport, onInitialReportLoaded }) {
             const getInitialColumns = () => {
                 const standardColumns = [
                     { key: 'given_name', label: 'First Name', visible: true, path: ['given_name'] },
@@ -636,7 +642,7 @@
                     { key: 'email_address', label: 'Email', visible: true, path: ['email_address'] },
                     { key: 'phone_number', label: 'Phone', visible: true, path: ['phone_number'] },
                     { key: 'created_at', label: 'Customer Since', visible: true, path: ['created_at'] },
-                    { key: 'groups', label: 'Groups', visible: true, path: [] },
+                    { key: 'groups', label: 'Groups & Segments', visible: true, path: [] },
                 ];
                 const customColumns = Array.from(customAttrDefs.values()).map(def => ({
                     key: def.key, label: def.name, visible: false, isCustom: true, path: ['custom_attributes', def.key, 'value']
@@ -655,26 +661,27 @@
             
             const visibleColumns = useMemo(() => columns.filter(c => c.visible), [columns]);
             
-            const handleAddPurchaseColumn = async (item, displayMode) => {
+            const handleAddPurchaseColumn = (item, displayMode) => {
                 const columnKey = `${item.id}-${displayMode}`;
                 const itemName = item.item_data.name;
                 const existingCol = columns.find(c => c.key === columnKey);
 
                 if (existingCol) {
-                    setColumns(prev => prev.filter(c => c.key !== columnKey));
+                     setColumns(prev => prev.filter(c => c.key !== columnKey));
                 } else {
                     let label = '';
                     if (displayMode === 'yesNo') label = `${itemName} (Purchased)`;
                     if (displayMode === 'lastDate') label = `${itemName} (Last Purchase)`;
                     if (displayMode === 'quantity') label = `${itemName} (Qty)`;
                     
-                    setColumns(prev => [...prev, { key: columnKey, label, visible: true, isPurchase: true, itemId: item.id, displayMode }]);
+                    const newColumn = { key: columnKey, label, visible: true, isPurchase: true, itemId: item.id, displayMode };
+                    setColumns(prev => [...prev, newColumn]);
                     
-                    fetchPurchaseData(item);
+                    fetchPurchaseData(item, reportingPeriod, newColumn);
                 }
             };
             
-            const fetchPurchaseData = async (item) => {
+            const fetchPurchaseData = async (item, period, column) => {
                 setIsFetchingData(true);
                 try {
                     const variationIds = item.item_data.variations.map(v => v.id);
@@ -683,9 +690,9 @@
                         line_item_filter: { catalog_object_ids: variationIds }
                     };
                     
-                    let currentReportingPeriod = {...reportingPeriod};
-                    if(reportingPeriod.relative !== 'all' && reportingPeriod.relative !== 'custom') {
-                        currentReportingPeriod = getRelativeDateRange(reportingPeriod.relative);
+                    let currentReportingPeriod = {...period};
+                    if(period.relative !== 'all' && period.relative !== 'custom') {
+                        currentReportingPeriod = getRelativeDateRange(period.relative);
                     }
 
                     if (currentReportingPeriod.start && currentReportingPeriod.end) {
@@ -694,19 +701,26 @@
                         end.setHours(23, 59, 59, 999);
                         filter.date_time_filter = { closed_at: { start_at: start.toISOString(), end_at: end.toISOString() } };
                     }
-                    const orderSearchData = await apiFetch('/v2/orders/search', {
-                        method: 'POST',
-                        body: JSON.stringify({ location_ids: [locationId], query: { filter } })
-                    });
+                    
+                    let allOrders = [];
+                    let cursor = undefined;
+                    do {
+                         const orderSearchData = await apiFetch('/v2/orders/search', {
+                            method: 'POST',
+                            body: JSON.stringify({ location_ids: [locationId], cursor: cursor, query: { filter } })
+                        });
+                        if (orderSearchData.orders) allOrders.push(...orderSearchData.orders);
+                        cursor = orderSearchData.cursor;
+                    } while (cursor);
                     
                     const customerPurchaseData = new Map();
-                    (orderSearchData.orders || []).forEach(order => {
+                    allOrders.forEach(order => {
                         if (!order.customer_id) return;
                         const customerData = customerPurchaseData.get(order.customer_id) || { quantity: 0, lastDate: null };
                         order.line_items.forEach(lineItem => {
                             if (variationIds.includes(lineItem.catalog_object_id)) {
                                 customerData.quantity += parseInt(lineItem.quantity, 10);
-                                if (order.closed_at && (!customerData.lastDate || order.closed_at > customerData.lastDate)) {
+                                if (order.closed_at && (!customerData.lastDate || new Date(order.closed_at) > new Date(customerData.lastDate))) {
                                     customerData.lastDate = order.closed_at;
                                 }
                             }
@@ -715,45 +729,76 @@
                     });
                     setPurchaseDataCache(prev => ({ ...prev, [item.id]: customerPurchaseData }));
                 } catch (err) {
-                    console.error("Error fetching purchase data:", err);
+                    console.error("Error fetching purchase data for item " + item.id, err);
+                    setColumns(prev => prev.filter(c => c.key !== column.key)); // Remove column on error
                 } finally {
                     setIsFetchingData(false);
                 }
             };
-
+            
             useEffect(() => {
-                const visiblePurchaseItems = columns.filter(c => c.isPurchase && c.visible).map(c => catalogItems.find(item => item.id === c.itemId));
-                if (visiblePurchaseItems.length > 0) {
-                    setPurchaseDataCache({});
-                    visiblePurchaseItems.forEach(item => {
-                        if (item) fetchPurchaseData(item);
-                    });
+                const visiblePurchaseCols = columns.filter(c => c.isPurchase && c.visible);
+                if (visiblePurchaseCols.length > 0) {
+                   setPurchaseDataCache({});
+                   visiblePurchaseCols.forEach(col => {
+                       const item = catalogItems.find(item => item.id === col.itemId);
+                       if (item) {
+                           fetchPurchaseData(item, reportingPeriod, col);
+                       }
+                   });
                 }
-            }, [reportingPeriod]);
+            }, [reportingPeriod, locationId]);
             
             const filteredAndSortedCustomers = useMemo(() => {
-                let sortableItems = [...allCustomers];
-                let filtered = sortableItems.filter(customer => {
+                let filtered = [...allCustomers];
+                
+                // Date Range Filtering (for customer creation date)
+                let currentReportingPeriod = {...reportingPeriod};
+                if(reportingPeriod.relative !== 'all' && reportingPeriod.relative !== 'custom') {
+                    currentReportingPeriod = getRelativeDateRange(reportingPeriod.relative);
+                }
+                if (currentReportingPeriod.start && currentReportingPeriod.end) {
+                    const startDate = new Date(currentReportingPeriod.start);
+                    const endDate = new Date(currentReportingPeriod.end);
+                    endDate.setHours(23, 59, 59, 999);
+                    filtered = filtered.filter(customer => {
+                        const createdAt = new Date(customer.created_at);
+                        return createdAt >= startDate && createdAt <= endDate;
+                    });
+                }
+
+                // Column Filters
+                filtered = filtered.filter(customer => {
                     return Object.entries(filters).every(([key, filterConfig]) => {
                         if (!filterConfig) return true;
                         
                         const col = columns.find(c => c.key === key);
-                        let customerValue;
+                        if (!col) return true;
 
+                        // Checkbox filters
                         if (filterConfig.values && filterConfig.values.size > 0) {
+                            let customerValue;
                             if (col.isPurchase) {
                                 const data = purchaseDataCache[col.itemId]?.get(customer.id);
                                 if (col.displayMode === 'quantity') customerValue = (data?.quantity || 0).toString();
                                 else if (col.displayMode === 'lastDate') customerValue = data ? formatSimpleDate(data.lastDate) : 'N/A';
                                 else customerValue = data ? 'Yes' : 'No';
                             } else if (col.key === 'groups') {
-                                customerValue = [...(customer.group_ids || []).map(id => groupsMap.get(id) || ''), ...(customer.segment_ids || []).map(id => segmentsMap.get(id) || '')].join(', ');
+                                const groupNames = (customer.group_ids || []).map(id => groupsMap.get(id) || '');
+                                const segmentNames = (customer.segment_ids || []).map(id => segmentsMap.get(id) || '');
+                                const allNames = [...groupNames, ...segmentNames].filter(Boolean).join(', ');
+                                // This part is tricky. Let's check if ANY of the customer's groups/segments are in the filter.
+                                const customerGroups = new Set([...groupNames, ...segmentNames]);
+                                return Array.from(filterConfig.values).some(v => customerGroups.has(v));
                             } else {
-                                customerValue = (getNestedValue(customer, col.path) || 'N/A').toString();
+                                customerValue = getNestedValue(customer, col.path);
+                                if (col.path.includes('created_at')) customerValue = formatSimpleDate(customerValue);
+                                customerValue = (customerValue || 'N/A').toString();
                             }
                             if (!filterConfig.values.has(customerValue)) return false;
                         }
 
+                        // Condition filters
                         if (filterConfig.condition && filterConfig.condition.type !== 'none') {
                             if (!col.isPurchase || col.displayMode !== 'quantity') return true;
                             
@@ -774,36 +819,45 @@
                 if (sortConfig.key) {
                     filtered.sort((a, b) => {
                         const col = columns.find(c => c.key === sortConfig.key);
+                        if (!col) return 0;
+
                         let aVal, bVal;
-                        if (col?.isPurchase) {
+                        if (col.isPurchase) {
                             const aData = purchaseDataCache[col.itemId]?.get(a.id);
                             const bData = purchaseDataCache[col.itemId]?.get(b.id);
                             if (col.displayMode === 'quantity') { aVal = aData?.quantity || 0; bVal = bData?.quantity || 0; }
-                            else if (col.displayMode === 'lastDate') { aVal = aData?.lastDate || ''; bVal = bData?.lastDate || ''; }
+                            else if (col.displayMode === 'lastDate') { aVal = new Date(aData?.lastDate || 0); bVal = new Date(bData?.lastDate || 0); }
                             else { aVal = !!aData; bVal = !!bData; }
-                        } else if (col?.key === 'groups') { aVal = ''; bVal = ''; }
-                        else { aVal = getNestedValue(a, col?.path || []) || ''; bVal = getNestedValue(b, col?.path || []) || ''; }
+                        } else if (col.key === 'groups') {
+                             const aGroups = [...(a.group_ids || []).map(id => groupsMap.get(id)), ...(a.segment_ids || []).map(id => segmentsMap.get(id))].join('');
+                             const bGroups = [...(b.group_ids || []).map(id => groupsMap.get(id)), ...(b.segment_ids || []).map(id => segmentsMap.get(id))].join('');
+                             aVal = aGroups; bVal = bGroups;
+                        } else {
+                            aVal = getNestedValue(a, col.path) || ''; 
+                            bVal = getNestedValue(b, col.path) || '';
+                        }
+
+                        if (typeof aVal === 'string' && typeof bVal === 'string') {
+                            return sortConfig.direction === 'ascending' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
+                        }
                         if (aVal < bVal) return sortConfig.direction === 'ascending' ? -1 : 1;
                         if (aVal > bVal) return sortConfig.direction === 'ascending' ? 1 : -1;
                         return 0;
                     });
                 }
                 return filtered;
-            }, [allCustomers, filters, sortConfig, columns, purchaseDataCache]);
+            }, [allCustomers, filters, sortConfig, columns, purchaseDataCache, reportingPeriod, groupsMap, segmentsMap]);
             
             const handleModalSave = (name, isWidget, isShared) => {
-                const report = { name, filters, sortConfig, columns, reportingPeriod };
-                if (isWidget) {
-                    onSaveWidget(report);
-                }
-                onSaveReport(report, isShared);
+                const report = { name, filters, sortConfig, columns, reportingPeriod, isWidget, isShared };
+                onSaveReport(report, isWidget, isShared);
                 setIsSaveModalOpen(false);
             };
             
             const handleLoadReport = (report) => {
-                setFilters(report.filters);
-                setSortConfig(report.sortConfig);
-                setColumns(report.columns);
+                setFilters(report.filters || {});
+                setSortConfig(report.sortConfig || { key: 'given_name', direction: 'ascending' });
+                setColumns(report.columns || getInitialColumns());
                 setReportingPeriod(report.reportingPeriod || { start: '', end: '', relative: 'all' });
             };
 
@@ -812,7 +866,7 @@
                     handleLoadReport(initialReport);
                     onInitialReportLoaded();
                 }
-            }, [initialReport]);
+            }, [initialReport, onInitialReportLoaded]);
 
             return (
                 <div className="flex h-full">
@@ -835,29 +889,40 @@
                             <span className="text-gray-600 font-semibold">{filteredAndSortedCustomers.length} Customers</span>
                          </div>
                          <h2 className="text-4xl font-bold text-gray-800">Customer Report</h2>
-                         <p className="text-gray-500">A complete list of all customers in your directory.</p>
                          <div className="mt-8 bg-white rounded-lg shadow overflow-x-auto">
                             <table className="w-full text-sm text-left text-gray-500">
                                 <thead className="text-xs text-gray-700 uppercase bg-gray-50">
-                                    <tr>{visibleColumns.map(col => <SortableHeader key={col.key} col={col} setSortConfig={setSortConfig} sortConfig={sortConfig} setActiveFilterPopup={setActiveFilterPopup} />)}</tr>
+                                    <tr>{visibleColumns.map(col => <SortableHeader key={col.key} col={col} setSortConfig={setSortConfig} sortConfig={sortConfig} setActiveFilterPopup={setActiveFilterPopup} filters={filters} />)}</tr>
                                 </thead>
                                 <tbody>
-                                    {isFetchingData && <tr><td colSpan={visibleColumns.length} className="text-center p-4"><div className="flex items-center justify-center"><div className="spinner mr-2"></div>Fetching data...</div></td></tr>}
-                                    {filteredAndSortedCustomers.map(customer => (
+                                    {isFetchingData && <tr><td colSpan={visibleColumns.length} className="text-center p-4"><div className="flex items-center justify-center"><div className="spinner mr-2"></div>Fetching purchase data...</div></td></tr>}
+                                    {!isFetchingData && filteredAndSortedCustomers.length === 0 && <tr><td colSpan={visibleColumns.length} className="text-center p-4 text-gray-500">No customers match the current filters.</td></tr>}
+                                    {!isFetchingData && filteredAndSortedCustomers.map(customer => (
                                         <tr key={customer.id} className="bg-white border-b hover:bg-gray-50">
-                                            {visibleColumns.map(col => (
-                                                <td key={col.key} className="px-6 py-4">
-                                                    {col.key === 'given_name' ? (<button onClick={() => onSelectCustomer(customer)} className="text-cyan-600 hover:underline font-medium whitespace-nowrap">{customer.given_name} {customer.family_name}</button>) 
-                                                    : col.key === 'groups' ? (<div className="flex flex-wrap gap-1">{[...(customer.group_ids || []).map(id => groupsMap.get(id) || '...'), ...(customer.segment_ids || []).map(id => segmentsMap.get(id) || '...')].map((name, i) => <Pill key={i} text={name} />)}</div>) 
-                                                    : col.isPurchase ? (
-                                                        col.displayMode === 'yesNo' ? (purchaseDataCache[col.itemId]?.has(customer.id) ? '✓' : '') :
-                                                        col.displayMode === 'lastDate' ? (formatSimpleDate(purchaseDataCache[col.itemId]?.get(customer.id)?.lastDate)) :
-                                                        col.displayMode === 'quantity' ? (purchaseDataCache[col.itemId]?.get(customer.id)?.quantity || 0) : ''
-                                                    )
-                                                    : col.path.includes('created_at') ? (formatSimpleDate(getNestedValue(customer, col.path))) 
-                                                    : (getNestedValue(customer, col.path) || 'N/A')}
-                                                </td>
-                                            ))}
+                                            {visibleColumns.map(col => {
+                                                let cellContent = 'N/A';
+                                                if (col.key === 'given_name') {
+                                                    cellContent = <button onClick={() => onSelectCustomer(customer)} className="text-cyan-600 hover:underline font-medium whitespace-nowrap">{customer.given_name || ''} {customer.family_name || ''}</button>;
+                                                } else if (col.key === 'family_name') {
+                                                    // This column is now combined with given_name, but we'll leave the logic in case it's separated again.
+                                                    cellContent = customer.family_name || 'N/A';
+                                                } else if (col.key === 'groups') {
+                                                    const groupNames = (customer.group_ids || []).map(id => ({ name: groupsMap.get(id) || id, color: 'bg-gray-100 text-gray-800' }));
+                                                    const segmentNames = (customer.segment_ids || []).map(id => ({ name: segmentsMap.get(id) || id, color: 'bg-green-100 text-green-800' }));
+                                                    const allPills = [...groupNames, ...segmentNames];
+                                                    cellContent = <div className="flex flex-wrap gap-1">{allPills.map((pill, i) => <Pill key={i} text={pill.name} color={pill.color} />)}</div>;
+                                                } else if (col.isPurchase) {
+                                                    const data = purchaseDataCache[col.itemId]?.get(customer.id);
+                                                    if (col.displayMode === 'yesNo') cellContent = data ? 'Yes' : 'No';
+                                                    else if (col.displayMode === 'lastDate') cellContent = data ? formatSimpleDate(data.lastDate) : 'N/A';
+                                                    else if (col.displayMode === 'quantity') cellContent = data?.quantity || 0;
+                                                } else if (col.path.includes('created_at')) {
+                                                    cellContent = formatSimpleDate(getNestedValue(customer, col.path));
+                                                } else {
+                                                    cellContent = getNestedValue(customer, col.path) || 'N/A';
+                                                }
+                                                return <td key={col.key} className="px-6 py-4 whitespace-nowrap">{cellContent}</td>;
+                                            })}
                                         </tr>
                                     ))}
                                 </tbody>
@@ -870,17 +935,27 @@
             );
         }
 
-        const SortableHeader = ({ col, setSortConfig, sortConfig, setActiveFilterPopup }) => {
+        const SortableHeader = ({ col, setSortConfig, sortConfig, setActiveFilterPopup, filters }) => {
             const isSorted = sortConfig.key === col.key;
+            const isFiltered = filters[col.key] && ((filters[col.key].values && filters[col.key].values.size > 0) || (filters[col.key].condition && filters[col.key].condition.type !== 'none'));
+
+            // Don't render the header for family_name if given_name is visible, as they are combined.
+            if (col.key === 'family_name') return null;
+            
+            let label = col.label;
+            if (col.key === 'given_name') {
+                label = 'Name';
+            }
+
             return (
                 <th scope="col" className="px-6 py-3">
                     <div className="flex items-center">
-                        <button onClick={() => setSortConfig({ key: col.key, direction: sortConfig.key === col.key && sortConfig.direction === 'ascending' ? 'descending' : 'ascending' })} className="uppercase">
-                            {col.label}
-                            {isSorted ? (sortConfig.direction === 'ascending' ? ' ▲' : ' ▼') : null}
+                        <button onClick={() => setSortConfig({ key: col.key, direction: sortConfig.key === col.key && sortConfig.direction === 'ascending' ? 'descending' : 'ascending' })} className="uppercase font-bold">
+                            {label}
                         </button>
-                        <button onClick={() => setActiveFilterPopup(col)} className="ml-2">
-                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707L16 11.414V16a1 1 0 01-.293.707l-2 2A1 1 0 0113 18v-1.586l-3.707-3.707A1 1 0 019 12V6a1 1 0 01-.293-.707L8 4H4a1 1 0 01-1-1z"></path></svg>
+                        {isSorted && (sortConfig.direction === 'ascending' ? <span className="ml-1">▲</span> : <span className="ml-1">▼</span>)}
+                        <button onClick={() => setActiveFilterPopup(col)} className="ml-2 text-gray-400 hover:text-gray-700">
+                            <svg className={`w-4 h-4 ${isFiltered ? 'text-cyan-600' : ''}`} fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M3 3a1 1 0 011-1h12a1 1 0 011 1v3a1 1 0 01-.293.707L12 11.414V15a1 1 0 01-.293.707l-2 2A1 1 0 018 17v-5.586L3.293 6.707A1 1 0 013 6V3z" clipRule="evenodd"></path></svg>
                         </button>
                     </div>
                 </th>
@@ -897,20 +972,21 @@
                         if (column.displayMode === 'quantity') value = (data?.quantity || 0).toString();
                         else if (column.displayMode === 'lastDate') value = data ? formatSimpleDate(data.lastDate) : 'N/A';
                         else value = data ? 'Yes' : 'No';
+                        values.add(value.toString());
                     } else if (column.key === 'groups') {
-                        [...(customer.group_ids || []).map(id => groupsMap.get(id) || ''), ...(customer.segment_ids || []).map(id => segmentsMap.get(id) || '')].forEach(g => values.add(g));
-                        return;
+                        (customer.group_ids || []).forEach(id => { if(groupsMap.has(id)) values.add(groupsMap.get(id))});
+                        (customer.segment_ids || []).forEach(id => { if(segmentsMap.has(id)) values.add(segmentsMap.get(id))});
                     } else {
-                        value = getNestedValue(customer, column.path) || 'N/A';
+                        value = getNestedValue(customer, column.path);
                         if (column.path.includes('created_at')) value = formatSimpleDate(value);
+                        values.add((value || 'N/A').toString());
                     }
-                    values.add(value.toString());
                 });
-                return Array.from(values).sort();
+                return Array.from(values).sort((a,b) => a.localeCompare(b));
             };
             
             const [uniqueValues] = useState(getColumnValues);
-            const [checkedValues, setCheckedValues] = useState(filters[column.key]?.values || new Set(uniqueValues));
+            const [checkedValues, setCheckedValues] = useState(filters[column.key]?.values || new Set());
             const [condition, setCondition] = useState(filters[column.key]?.condition || { type: 'none', value1: '', value2: '' });
             const [searchTerm, setSearchTerm] = useState('');
             
@@ -923,23 +999,33 @@
                 setCheckedValues(newChecked);
             };
 
-            const handleSelectAll = () => setCheckedValues(new Set(uniqueValues));
+            const handleSelectAll = () => setCheckedValues(new Set(filteredUniqueValues));
             const handleClear = () => setCheckedValues(new Set());
 
             const handleApply = () => {
                 setFilters(prev => ({ ...prev, [column.key]: { values: checkedValues, condition } }));
                 onClose();
             };
+            
+             const handleRemoveFilter = () => {
+                const newFilters = { ...filters };
+                delete newFilters[column.key];
+                setFilters(newFilters);
+                onClose();
+            };
 
             const filteredUniqueValues = useMemo(() => {
                 if (!searchTerm) return uniqueValues;
-                return uniqueValues.filter(v => v.toLowerCase().includes(searchTerm.toLowerCase()));
+                return uniqueValues.filter(v => v && v.toLowerCase().includes(searchTerm.toLowerCase()));
             }, [searchTerm, uniqueValues]);
 
             return (
                 <div className="fixed inset-0 bg-black bg-opacity-25 flex items-center justify-center z-30" onClick={onClose}>
                     <div className="bg-white rounded-lg shadow-xl p-4 w-full max-w-sm" onClick={e => e.stopPropagation()}>
-                        <h3 className="font-bold text-lg">Filter by {column.label}</h3>
+                        <div className="flex justify-between items-center">
+                            <h3 className="font-bold text-lg">Filter by {column.label}</h3>
+                            <button onClick={onClose} className="text-gray-400 hover:text-gray-600">&times;</button>
+                        </div>
                         
                         {isNumeric && (
                             <div className="mt-4 border-t pt-4">
@@ -955,9 +1041,9 @@
                                 )}
                                 {condition.type === 'between' && (
                                     <div className="flex items-center space-x-2 mt-1">
-                                        <input type="number" value={condition.value1} onChange={e => setCondition(c => ({...c, value1: e.target.value}))} className="w-full p-1 border rounded-md text-sm" />
+                                        <input type="number" value={condition.value1} onChange={e => setCondition(c => ({...c, value1: e.target.value}))} className="w-full p-1 border rounded-md text-sm" placeholder="min" />
                                         <span>and</span>
-                                        <input type="number" value={condition.value2} onChange={e => setCondition(c => ({...c, value2: e.target.value}))} className="w-full p-1 border rounded-md text-sm" />
+                                        <input type="number" value={condition.value2} onChange={e => setCondition(c => ({...c, value2: e.target.value}))} className="w-full p-1 border rounded-md text-sm" placeholder="max" />
                                     </div>
                                 )}
                             </div>
@@ -966,23 +1052,26 @@
                         <div className="mt-4 border-t pt-4">
                              <h4 className="text-sm font-semibold mb-2">Filter by values</h4>
                             <div className="my-2 flex space-x-2">
-                                <button onClick={handleSelectAll} className="text-sm text-cyan-600 hover:underline">Select all</button>
+                                <button onClick={handleSelectAll} className="text-sm text-cyan-600 hover:underline">Select all visible</button>
                                 <button onClick={handleClear} className="text-sm text-cyan-600 hover:underline">Clear</button>
                             </div>
                             <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Search values..." className="w-full px-2 py-1 border rounded-md text-sm mb-2"/>
-                            <div className="max-h-40 overflow-y-auto border rounded-md p-2">
+                            <div className="max-h-40 overflow-y-auto border rounded-md p-2 space-y-1">
                                 {filteredUniqueValues.map(value => (
-                                    <label key={value} className="flex items-center text-sm">
-                                        <input type="checkbox" checked={checkedValues.has(value)} onChange={() => handleCheck(value)} className="mr-2"/>
-                                        {value}
+                                    <label key={value} className="flex items-center text-sm hover:bg-gray-50 rounded p-1">
+                                        <input type="checkbox" checked={checkedValues.has(value)} onChange={() => handleCheck(value)} className="mr-2 h-4 w-4 text-cyan-600 border-gray-300 rounded focus:ring-cyan-500"/>
+                                        <span className="truncate">{value}</span>
                                     </label>
                                 ))}
                             </div>
                         </div>
 
-                        <div className="mt-4 flex justify-end space-x-2">
-                            <button onClick={onClose} className="px-4 py-2 bg-gray-200 rounded-md">Cancel</button>
-                            <button onClick={handleApply} className="px-4 py-2 bg-cyan-600 text-white rounded-md">OK</button>
+                        <div className="mt-4 flex justify-between items-center">
+                            <button onClick={handleRemoveFilter} className="px-4 py-2 text-sm text-red-600 hover:text-red-800">Remove Filter</button>
+                            <div className="space-x-2">
+                                <button onClick={onClose} className="px-4 py-2 bg-gray-200 rounded-md text-sm">Cancel</button>
+                                <button onClick={handleApply} className="px-4 py-2 bg-cyan-600 text-white rounded-md text-sm">OK</button>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -990,14 +1079,18 @@
         }
 
         function ReportsSidebar({ columns, setColumns, savedReports, onLoadReport, onSaveReportClick, catalogItems, onAddPurchaseColumn, reportingPeriod, setReportingPeriod, onRenameReport, onDeleteReport }) {
-            const [isColumnsOpen, setIsColumnsOpen] = useState(true);
-            const [isSavedReportsOpen, setIsSavedReportsOpen] = useState(true);
-            const [isPurchaseHistoryOpen, setIsPurchaseHistoryOpen] = useState(true);
-            const [isReportingPeriodOpen, setIsReportingPeriodOpen] = useState(true);
+            const [openSections, setOpenSections] = useState({
+                period: true,
+                reports: true,
+                columns: true,
+                purchase: true
+            });
             const [purchaseSearch, setPurchaseSearch] = useState('');
             const [activePopper, setActivePopper] = useState(null);
             const [renameModal, setRenameModal] = useState(null);
             const [deleteModal, setDeleteModal] = useState(null);
+
+            const toggleSection = (section) => setOpenSections(prev => ({...prev, [section]: !prev[section]}));
 
             const filteredItems = useMemo(() => {
                 if (!purchaseSearch) return catalogItems;
@@ -1005,20 +1098,17 @@
             }, [purchaseSearch, catalogItems]);
 
             const handleColumnToggle = (key) => {
-                if (columns.find(c => c.key === key)?.isPurchase) {
-                    setColumns(prev => prev.filter(c => c.key !== key));
-                } else {
-                    setColumns(prev => prev.map(c => c.key === key ? { ...c, visible: !c.visible } : c));
-                }
+                setColumns(prev => prev.map(c => {
+                    if (c.key === key) return { ...c, visible: !c.visible };
+                    // Special handling to show/hide 'family_name' with 'given_name'
+                    if (key === 'given_name' && c.key === 'family_name') return { ...c, visible: !c.visible };
+                    return c;
+                }));
             };
 
             const handleRelativeDateChange = (e) => {
                 const period = e.target.value;
-                if (period === 'custom') {
-                    setReportingPeriod({ ...reportingPeriod, relative: 'custom' });
-                } else {
-                    setReportingPeriod({ start: '', end: '', relative: period });
-                }
+                setReportingPeriod({ start: '', end: '', relative: period });
             };
             
             const handleRename = (newName) => {
@@ -1034,88 +1124,94 @@
                 }
                 setDeleteModal(null);
             };
+            
+            const SidebarSection = ({ title, id, children }) => (
+                <div>
+                    <button onClick={() => toggleSection(id)} className="font-semibold w-full text-left flex justify-between items-center py-2">
+                        {title}
+                        <span className="transform transition-transform">{openSections[id] ? '−' : '+'}</span>
+                    </button>
+                    {openSections[id] && <div className="mt-2 space-y-2 pl-2 border-l-2 border-gray-200">{children}</div>}
+                </div>
+            );
 
             return (
                 <>
-                <div className="w-1/3 max-w-xs bg-white border-r border-gray-200 flex flex-col p-4 space-y-4 overflow-y-auto">
+                <div className="w-80 bg-white border-r border-gray-200 flex flex-col p-4 space-y-2 overflow-y-auto">
                     <h2 className="text-xl font-bold">Report Controls</h2>
                     <div className="space-y-2">
-                        <button onClick={onSaveReportClick} className="w-full px-4 py-2 bg-cyan-600 text-white rounded-md shadow-sm hover:bg-cyan-700">Save</button>
+                        <button onClick={onSaveReportClick} className="w-full px-4 py-2 bg-cyan-600 text-white rounded-md shadow-sm hover:bg-cyan-700">Save Report</button>
                     </div>
                     
-                    <div>
-                        <button onClick={() => setIsReportingPeriodOpen(!isReportingPeriodOpen)} className="font-semibold w-full text-left flex justify-between items-center">Reporting Period <span>{isReportingPeriodOpen ? '−' : '+'}</span></button>
-                        {isReportingPeriodOpen && <div className="mt-2 space-y-2 pl-2 border-l-2">
-                            <select onChange={handleRelativeDateChange} value={reportingPeriod.relative} className="w-full px-2 py-1 border rounded-md text-sm">
-                                <option value="all">All Time</option>
-                                <option value="yesterday">Yesterday</option>
-                                <option value="lastWeek">Last Week</option>
-                                <option value="lastMonth">Last Month</option>
-                                <option value="lastQuarter">Last Quarter</option>
-                                <option value="lastYear">Last Year</option>
-                                <option value="custom">Custom Range</option>
-                            </select>
-                            {reportingPeriod.relative === 'custom' && <>
-                                <div>
-                                    <label className="text-sm">Start Date</label>
-                                    <input type="date" value={reportingPeriod.start} onChange={e => setReportingPeriod(p => ({...p, start: e.target.value}))} className="w-full px-2 py-1 border rounded-md text-sm"/>
-                                </div>
-                                <div>
-                                    <label className="text-sm">End Date</label>
-                                    <input type="date" value={reportingPeriod.end} onChange={e => setReportingPeriod(p => ({...p, end: e.target.value}))} className="w-full px-2 py-1 border rounded-md text-sm"/>
-                                </div>
-                            </>}
-                        </div>}
-                    </div>
+                    <SidebarSection title="Reporting Period" id="period">
+                        <select onChange={handleRelativeDateChange} value={reportingPeriod.relative} className="w-full px-2 py-1 border rounded-md text-sm">
+                            <option value="all">All Time</option>
+                            <option value="yesterday">Yesterday</option>
+                            <option value="lastWeek">Last Week</option>
+                            <option value="lastMonth">Last Month</option>
+                            <option value="lastQuarter">Last Quarter</option>
+                            <option value="lastYear">Last Year</option>
+                            <option value="custom">Custom Range</option>
+                        </select>
+                        {reportingPeriod.relative === 'custom' && <>
+                            <div>
+                                <label className="text-sm">Start Date</label>
+                                <input type="date" value={reportingPeriod.start} onChange={e => setReportingPeriod(p => ({...p, start: e.target.value, relative: 'custom'}))} className="w-full px-2 py-1 border rounded-md text-sm"/>
+                            </div>
+                            <div>
+                                <label className="text-sm">End Date</label>
+                                <input type="date" value={reportingPeriod.end} onChange={e => setReportingPeriod(p => ({...p, end: e.target.value, relative: 'custom'}))} className="w-full px-2 py-1 border rounded-md text-sm"/>
+                            </div>
+                        </>}
+                    </SidebarSection>
 
-                    <div>
-                        <button onClick={() => setIsSavedReportsOpen(!isSavedReportsOpen)} className="font-semibold w-full text-left flex justify-between items-center">Saved Reports <span>{isSavedReportsOpen ? '−' : '+'}</span></button>
-                        {isSavedReportsOpen && <div className="mt-2 space-y-1 pl-2 border-l-2">
-                            {savedReports.map((r) => (
-                                <div key={r.id} className="flex items-center justify-between text-sm group">
-                                    <button onClick={() => onLoadReport(r)} className="hover:underline">{r.name} {r.isPersonal ? '' : '(Shared)'}</button>
-                                    <div className="hidden group-hover:flex items-center">
-                                        <button onClick={() => setRenameModal(r)} className="p-1 hover:bg-gray-200 rounded">✏️</button>
-                                        <button onClick={() => setDeleteModal(r)} className="p-1 hover:bg-gray-200 rounded">🗑️</button>
-                                    </div>
+                    <SidebarSection title="Saved Reports" id="reports">
+                        <div className="max-h-60 overflow-y-auto">
+                        {savedReports.map((r) => (
+                            <div key={r.id} className="flex items-center justify-between text-sm group pr-1">
+                                <button onClick={() => onLoadReport(r)} className="hover:underline text-left flex-grow truncate py-1">
+                                    {r.name}
+                                    <span className="text-gray-400 ml-1">{r.isPersonal ? '(Personal)' : '(Shared)'}</span>
+                                </button>
+                                <div className="hidden group-hover:flex items-center flex-shrink-0">
+                                    <button onClick={() => setRenameModal(r)} className="p-1 hover:bg-gray-200 rounded text-xs">✏️</button>
+                                    <button onClick={() => setDeleteModal(r)} className="p-1 hover:bg-gray-200 rounded text-xs">🗑️</button>
                                 </div>
-                            ))}
-                        </div>}
-                    </div>
+                            </div>
+                        ))}
+                        {savedReports.length === 0 && <p className="text-sm text-gray-400">No saved reports.</p>}
+                        </div>
+                    </SidebarSection>
 
-                    <div>
-                        <button onClick={() => setIsColumnsOpen(!isColumnsOpen)} className="font-semibold w-full text-left flex justify-between items-center">Columns <span>{isColumnsOpen ? '−' : '+'}</span></button>
-                        {isColumnsOpen && <div className="mt-2 space-y-1 pl-2 border-l-2 max-h-60 overflow-y-auto">
-                           {columns.map(col => (
-                                <label key={col.key} className="flex items-center text-sm">
-                                    <input type="checkbox" checked={col.visible} onChange={() => handleColumnToggle(col.key)} className="mr-2"/>
-                                    <span className={col.isCustom ? 'italic' : ''}>{col.label}</span>
+                    <SidebarSection title="Columns" id="columns">
+                        <div className="mt-2 space-y-1 max-h-60 overflow-y-auto">
+                           {columns.filter(c => c.key !== 'family_name').map(col => (
+                                <label key={col.key} className="flex items-center text-sm p-1 hover:bg-gray-50 rounded">
+                                    <input type="checkbox" checked={col.visible} onChange={() => handleColumnToggle(col.key)} className="mr-2 h-4 w-4 text-cyan-600 border-gray-300 rounded focus:ring-cyan-500"/>
+                                    <span className={col.isCustom ? 'italic' : ''}>{col.label === 'First Name' ? 'Name' : col.label}</span>
                                 </label>
                             ))}
-                        </div>}
-                    </div>
+                        </div>
+                    </SidebarSection>
                     
-                    <div>
-                        <button onClick={() => setIsPurchaseHistoryOpen(!isPurchaseHistoryOpen)} className="font-semibold w-full text-left flex justify-between items-center">Purchase History <span>{isPurchaseHistoryOpen ? '−' : '+'}</span></button>
-                        {isPurchaseHistoryOpen && <div className="mt-2 space-y-1 pl-2 border-l-2">
-                            <input type="text" value={purchaseSearch} onChange={e => setPurchaseSearch(e.target.value)} placeholder="Search items..." className="w-full px-2 py-1 border rounded-md text-sm mb-2"/>
-                            <div className="max-h-60 overflow-y-auto">
-                                {filteredItems.map(item => (
-                                    <div key={item.id} className="flex items-center text-sm justify-between relative">
-                                        <span>{item.item_data.name}</span>
-                                        <button onClick={() => setActivePopper(activePopper === item.id ? null : item.id)} className="ml-2 px-2 py-0.5 bg-gray-200 rounded hover:bg-gray-300">+</button>
-                                        {activePopper === item.id && (
-                                            <div className="absolute left-full ml-2 w-48 bg-white rounded-md shadow-lg z-20 p-2 border">
-                                                <button onClick={() => {onAddPurchaseColumn(item, 'yesNo'); setActivePopper(null);}} className="block w-full text-left text-sm p-1 hover:bg-gray-100">Purchased (Yes/No)</button>
-                                                <button onClick={() => {onAddPurchaseColumn(item, 'lastDate'); setActivePopper(null);}} className="block w-full text-left text-sm p-1 hover:bg-gray-100">Last Purchase Date</button>
-                                                <button onClick={() => {onAddPurchaseColumn(item, 'quantity'); setActivePopper(null);}} className="block w-full text-left text-sm p-1 hover:bg-gray-100">Total Quantity</button>
-                                            </div>
-                                        )}
-                                    </div>
-                                ))}
-                            </div>
-                        </div>}
-                    </div>
+                    <SidebarSection title="Purchase History" id="purchase">
+                        <input type="text" value={purchaseSearch} onChange={e => setPurchaseSearch(e.target.value)} placeholder="Search items..." className="w-full px-2 py-1 border rounded-md text-sm mb-2"/>
+                        <div className="max-h-60 overflow-y-auto">
+                            {filteredItems.map(item => (
+                                <div key={item.id} className="flex items-center text-sm justify-between relative p-1">
+                                    <span className="truncate">{item.item_data.name}</span>
+                                    <button onClick={() => setActivePopper(activePopper === item.id ? null : item.id)} className="ml-2 px-2 py-0.5 bg-gray-200 rounded hover:bg-gray-300">+</button>
+                                    {activePopper === item.id && (
+                                        <div className="absolute left-full ml-2 w-48 bg-white rounded-md shadow-lg z-20 p-2 border">
+                                            <button onClick={() => {onAddPurchaseColumn(item, 'yesNo'); setActivePopper(null);}} className="block w-full text-left text-sm p-1 hover:bg-gray-100">Purchased (Yes/No)</button>
+                                            <button onClick={() => {onAddPurchaseColumn(item, 'lastDate'); setActivePopper(null);}} className="block w-full text-left text-sm p-1 hover:bg-gray-100">Last Purchase Date</button>
+                                            <button onClick={() => {onAddPurchaseColumn(item, 'quantity'); setActivePopper(null);}} className="block w-full text-left text-sm p-1 hover:bg-gray-100">Total Quantity</button>
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    </SidebarSection>
                 </div>
                 {renameModal && <RenameModal report={renameModal} onRename={handleRename} onCancel={() => setRenameModal(null)} />}
                 {deleteModal && <DeleteModal report={deleteModal} onDelete={handleDelete} onCancel={() => setDeleteModal(null)} />}
@@ -1126,12 +1222,13 @@
         function SaveReportModal({ onSave, onCancel }) {
             const [name, setName] = useState('');
             const [isShared, setIsShared] = useState(false);
+            const [isWidget, setIsWidget] = useState(false);
 
             return (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-40">
                     <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-sm">
                         <h3 className="font-bold text-lg">Save Report</h3>
-                        <p className="text-sm text-gray-500 mt-2">Please enter a name for this configuration.</p>
+                        <p className="text-sm text-gray-500 mt-2">Enter a name for this report configuration.</p>
                         <input
                             type="text"
                             value={name}
@@ -1139,14 +1236,62 @@
                             className="w-full mt-4 px-3 py-2 border rounded-md"
                             placeholder="Report Name"
                         />
-                        <label className="flex items-center mt-4 text-sm">
+                         <label className="flex items-center mt-4 text-sm">
+                            <input type="checkbox" checked={isWidget} onChange={e => setIsWidget(e.target.checked)} className="mr-2"/>
+                            Add as a Dashboard Widget
+                        </label>
+                        <label className="flex items-center mt-2 text-sm">
                             <input type="checkbox" checked={isShared} onChange={e => setIsShared(e.target.checked)} className="mr-2"/>
                             Share with organization
                         </label>
                         <div className="mt-6 flex justify-end space-x-2">
                             <button onClick={onCancel} className="px-4 py-2 bg-gray-200 rounded-md">Cancel</button>
-                            <button onClick={() => name && onSave(name, false, isShared)} className="px-4 py-2 bg-cyan-600 text-white rounded-md">Save Report</button>
-                            <button onClick={() => name && onSave(name, true, isShared)} className="px-4 py-2 bg-green-500 text-white rounded-md">Save and Add Widget</button>
+                            <button onClick={() => name && onSave(name, isWidget, isShared)} className="px-4 py-2 bg-cyan-600 text-white rounded-md">Save</button>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        function RenameModal({ report, onRename, onCancel }) {
+            const [newName, setNewName] = useState(report.name);
+
+            const handleConfirm = () => {
+                if (newName.trim()) {
+                    onRename(newName.trim());
+                }
+            };
+
+            return (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-40">
+                    <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-sm">
+                        <h3 className="font-bold text-lg">Rename Report</h3>
+                        <p className="text-sm text-gray-500 mt-2">Enter a new name for the report "{report.name}".</p>
+                        <input
+                            type="text"
+                            value={newName}
+                            onChange={(e) => setNewName(e.target.value)}
+                            className="w-full mt-4 px-3 py-2 border rounded-md"
+                            placeholder="New Report Name"
+                        />
+                        <div className="mt-6 flex justify-end space-x-2">
+                            <button onClick={onCancel} className="px-4 py-2 bg-gray-200 rounded-md">Cancel</button>
+                            <button onClick={handleConfirm} className="px-4 py-2 bg-cyan-600 text-white rounded-md">Rename</button>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        function DeleteModal({ report, onDelete, onCancel }) {
+            return (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-40">
+                    <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-sm">
+                        <h3 className="font-bold text-lg">Delete Report</h3>
+                        <p className="text-sm text-gray-500 mt-2">Are you sure you want to delete the report "{report.name}"? This action cannot be undone.</p>
+                        <div className="mt-6 flex justify-end space-x-2">
+                            <button onClick={onCancel} className="px-4 py-2 bg-gray-200 rounded-md">Cancel</button>
+                            <button onClick={onDelete} className="px-4 py-2 bg-red-600 text-white rounded-md">Delete</button>
                         </div>
                     </div>
                 </div>
@@ -1154,56 +1299,61 @@
         }
 
         function CustomerProfile({ customer, groupsMap, segmentsMap, customAttrDefs, apiFetch, onBack }) {
-            const [customAttrs, setCustomAttrs] = useState({});
-            const [fetchingAttrs, setFetchingAttrs] = useState({});
-
-            const fetchAttribute = async (def) => {
-                setFetchingAttrs(prev => ({...prev, [def.key]: true}));
-                try {
-                    const attr = await apiFetch(`/v2/customers/${customer.id}/custom-attributes/${def.key}`);
-                    setCustomAttrs(prev => ({...prev, [def.key]: attr.custom_attribute?.value || 'N/A'}));
-                } catch (e) {
-                    setCustomAttrs(prev => ({...prev, [def.key]: 'Error'}));
-                } finally {
-                    setFetchingAttrs(prev => ({...prev, [def.key]: false}));
-                }
-            };
+            const [customAttrs, setCustomAttrs] = useState(customer.custom_attributes || {});
             
             const formatAddress = (address) => {
                 if (!address) return 'N/A';
                 const parts = [ address.address_line_1, address.address_line_2, `${address.locality || ''} ${address.administrative_district_level_1 || ''} ${address.postal_code || ''}`.trim(), address.country ];
                 return parts.filter(Boolean).join(', ');
             };
+
             return (
-                <div>
-                    <button onClick={onBack} className="mb-6 text-cyan-600 hover:text-cyan-800"> &larr; Back to Previous Page</button>
-                    <h2 className="text-4xl font-bold text-gray-800">{customer.given_name} {customer.family_name}</h2>
-                    <p className="text-gray-500">Customer since {formatDetailedDate(customer.created_at)}</p>
-                    <div className="mt-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        <InfoCard title="Contact Information"><InfoItem label="Email" value={customer.email_address} /><InfoItem label="Phone" value={customer.phone_number} /></InfoCard>
-                        <InfoCard title="Address"><p className="text-gray-800">{formatAddress(customer.address)}</p></InfoCard>
-                        <InfoCard title="Stats"><InfoItem label="Last Visit" value={customer.last_visit ? formatDetailedDate(customer.last_visit) : 'No visits found'} /><InfoItem label="Source" value={customer.creation_source} /></InfoCard>
-                        <InfoCard title="Details" className="md:col-span-2 lg:col-span-1"><InfoItem label="Birthday" value={customer.birthday} /><InfoItem label="Company" value={customer.company_name} /><InfoItem label="Reference ID" value={customer.reference_id} /></InfoCard>
-                        <InfoCard title="Groups & Segments" className="md:col-span-3"><div className="flex flex-wrap gap-2">{(customer.group_ids || []).map(id => <Pill key={id} text={groupsMap.get(id) || id} />)}{(customer.segment_ids || []).map(id => <Pill key={id} text={segmentsMap.get(id) || id} color="bg-green-100 text-green-800" />)}</div></InfoCard>
-                        <InfoCard title="Custom Fields" className="md:col-span-3">
-                            {Array.from(customAttrDefs.values()).map(def => (
-                                <div key={def.key} className="flex justify-between items-center">
-                                    <InfoItem label={def.name} value={customAttrs[def.key]} />
-                                    {!customAttrs[def.key] && (
-                                        <button onClick={() => fetchAttribute(def)} disabled={fetchingAttrs[def.key]} className="px-3 py-1 text-xs bg-gray-200 rounded hover:bg-gray-300">
-                                            {fetchingAttrs[def.key] ? <div className="spinner"></div> : 'Fetch Data'}
-                                        </button>
-                                    )}
+                <div className="p-8">
+                    <button onClick={onBack} className="mb-6 text-cyan-600 hover:text-cyan-800"> &larr; Back</button>
+                    <div className="bg-white p-8 rounded-lg shadow-md">
+                        <h2 className="text-4xl font-bold text-gray-800">{customer.given_name} {customer.family_name}</h2>
+                        <p className="text-gray-500">Customer since {formatSimpleDate(customer.created_at)}</p>
+                        
+                        <div className="mt-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
+                            <InfoCard title="Contact Information">
+                                <InfoItem label="Email" value={customer.email_address} />
+                                <InfoItem label="Phone" value={customer.phone_number} />
+                            </InfoCard>
+                            <InfoCard title="Address">
+                                <p className="text-gray-800">{formatAddress(customer.address)}</p>
+                            </InfoCard>
+                            <InfoCard title="Stats">
+                                <InfoItem label="Last Visit" value={customer.last_visit ? formatDetailedDate(customer.last_visit) : 'No visits found'} />
+                                <InfoItem label="Source" value={customer.creation_source} />
+                            </InfoCard>
+                             <InfoCard title="Details">
+                                <InfoItem label="Birthday" value={customer.birthday ? formatSimpleDate(customer.birthday) : 'N/A'} />
+                                <InfoItem label="Company" value={customer.company_name} />
+                                <InfoItem label="Reference ID" value={customer.reference_id} />
+                            </InfoCard>
+                            <InfoCard title="Groups & Segments" className="lg:col-span-2">
+                                <div className="flex flex-wrap gap-2">
+                                    {(customer.group_ids || []).map(id => <Pill key={id} text={groupsMap.get(id) || id} />)}
+                                    {(customer.segment_ids || []).map(id => <Pill key={id} text={segmentsMap.get(id) || id} color="bg-green-100 text-green-800" />)}
                                 </div>
-                            ))}
-                        </InfoCard>
-                        <InfoCard title="Notes" className="md:col-span-3"><p className="text-gray-700 whitespace-pre-wrap">{customer.note || 'No notes for this customer.'}</p></InfoCard>
+                            </InfoCard>
+                            <InfoCard title="Custom Fields" className="md:col-span-3">
+                                <div className="space-y-3">
+                                    {Array.from(customAttrDefs.values()).map(def => (
+                                        <InfoItem key={def.key} label={def.name} value={getNestedValue(customer, ['custom_attributes', def.key, 'value'])} />
+                                    ))}
+                                </div>
+                            </InfoCard>
+                            <InfoCard title="Notes" className="md:col-span-3">
+                                <p className="text-gray-700 whitespace-pre-wrap">{customer.note || 'No notes for this customer.'}</p>
+                            </InfoCard>
+                        </div>
                     </div>
                 </div>
             );
         }
         
-        const InfoCard = ({ title, children, className }) => (<div className={`bg-white p-6 rounded-lg shadow ${className || ''}`}><h3 className="text-lg font-semibold text-gray-800 border-b pb-2 mb-4">{title}</h3><div className="space-y-3">{children}</div></div>);
+        const InfoCard = ({ title, children, className }) => (<div className={`bg-white p-6 rounded-lg shadow-sm border ${className || ''}`}><h3 className="text-lg font-semibold text-gray-800 border-b pb-2 mb-4">{title}</h3><div className="space-y-3">{children}</div></div>);
         const InfoItem = ({ label, value }) => (<div><p className="text-sm text-gray-500">{label}</p><p className="font-medium text-gray-800">{value || 'N/A'}</p></div>);
         const Pill = ({ text, color = 'bg-gray-100 text-gray-800' }) => (<span className={`px-3 py-1 text-sm font-medium rounded-full ${color}`}>{text}</span>);
 
