@@ -119,7 +119,6 @@
             const [locationId, setLocationId] = useState(null);
             const [personalReports, setPersonalReports] = useState([]);
             const [publicReports, setPublicReports] = useState([]);
-            const [dashboardWidgets, setDashboardWidgets] = useState([]);
             
             // View management
             const [currentView, setCurrentView] = useState('dashboard');
@@ -175,9 +174,8 @@
                             const data = doc.data();
                             setSquareAccessToken(data.squareAccessToken || null);
                             setPersonalReports(deserializeReports(data.savedReports));
-                            setDashboardWidgets(deserializeReports(data.dashboardWidgets));
                         } else {
-                            userDocRef.set({ squareAccessToken: null, savedReports: [], dashboardWidgets: [] });
+                            userDocRef.set({ squareAccessToken: null, savedReports: [] });
                         }
                     });
 
@@ -312,8 +310,8 @@
                 return { ...report, filters: serializedFilters };
             };
 
-            const handleSaveReport = (report, isShared) => {
-                const reportWithId = { ...report, id: report.id || crypto.randomUUID() };
+            const handleSaveReport = (report, isWidget, isShared) => {
+                const reportWithId = { ...report, id: report.id || crypto.randomUUID(), isWidget };
                 const serializedReport = serializeReport(reportWithId);
                 if (isShared) {
                     const publicReportsDocRef = db.collection('public').doc('reports');
@@ -338,8 +336,6 @@
                 if (isPersonal) {
                     const updatedReports = updateLogic(personalReports);
                     db.collection('users').doc(user.uid).update({ savedReports: updatedReports.map(serializeReport) });
-                    const updatedWidgets = dashboardWidgets.map(w => w.id === reportId ? { ...w, name: newName } : w);
-                    db.collection('users').doc(user.uid).update({ dashboardWidgets: updatedWidgets.map(serializeReport) });
                 } else {
                     const updatedReports = updateLogic(publicReports);
                     db.collection('public').doc('reports').set({ allReports: updatedReports.map(serializeReport) });
@@ -350,21 +346,10 @@
                 if (isPersonal) {
                     const updatedReports = personalReports.filter(r => r.id !== reportId);
                     db.collection('users').doc(user.uid).update({ savedReports: updatedReports.map(serializeReport) });
-                    const updatedWidgets = dashboardWidgets.filter(w => w.id !== reportId);
-                    db.collection('users').doc(user.uid).update({ dashboardWidgets: updatedWidgets.map(serializeReport) });
                 } else {
                     const updatedReports = publicReports.filter(r => r.id !== reportId);
                     db.collection('public').doc('reports').set({ allReports: updatedReports.map(serializeReport) });
                 }
-            };
-
-            const handleSaveWidget = (report) => {
-                const reportWithId = { ...report, id: report.id || crypto.randomUUID() };
-                const serializedReport = serializeReport(reportWithId);
-                const userDocRef = db.collection('users').doc(user.uid);
-                userDocRef.update({
-                    dashboardWidgets: firebase.firestore.FieldValue.arrayUnion(serializedReport)
-                });
             };
             
             const handleNavigate = (view, payload = null) => {
@@ -394,6 +379,7 @@
             }
             
             const combinedReports = [...personalReports.map(r => ({...r, isPersonal: true})), ...publicReports];
+            const widgets = combinedReports.filter(r => r.isWidget);
 
             const renderMainContent = () => {
                 if (isLoading) return <div className="flex justify-center items-center h-full"><div className="spinner"></div><p className="ml-2">{loadingMessage}</p></div>;
@@ -403,12 +389,12 @@
                     case 'profile':
                         return customerDetails ? <CustomerProfile customer={customerDetails} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} apiFetch={apiFetch} onBack={() => setCurrentView('directory')} /> : null;
                     case 'reports':
-                        return <ReportsPage allCustomers={allCustomers} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} onSelectCustomer={handleSelectCustomer} onBack={() => setCurrentView('dashboard')} apiFetch={apiFetch} savedReports={combinedReports} onSaveReport={handleSaveReport} onSaveWidget={handleSaveWidget} onRenameReport={handleRenameReport} onDeleteReport={handleDeleteReport} catalogItems={catalogItems} locationId={locationId} initialReport={reportToLoad} onInitialReportLoaded={() => setReportToLoad(null)} />;
+                        return <ReportsPage allCustomers={allCustomers} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} onSelectCustomer={handleSelectCustomer} onBack={() => setCurrentView('dashboard')} apiFetch={apiFetch} savedReports={combinedReports} onSaveReport={handleSaveReport} onRenameReport={handleRenameReport} onDeleteReport={handleDeleteReport} catalogItems={catalogItems} locationId={locationId} initialReport={reportToLoad} onInitialReportLoaded={() => setReportToLoad(null)} />;
                     case 'directory':
                         return <DirectoryPage allCustomers={allCustomers} onSelectCustomer={handleSelectCustomer} onBack={() => setCurrentView('dashboard')} />;
                     case 'dashboard':
                     default:
-                        return <Dashboard onNavigate={handleNavigate} widgets={dashboardWidgets} allCustomers={allCustomers} groupsMap={groupsMap} segmentsMap={segmentsMap} onSelectCustomer={handleSelectCustomer} />;
+                        return <Dashboard onNavigate={handleNavigate} widgets={widgets} allCustomers={allCustomers} groupsMap={groupsMap} segmentsMap={segmentsMap} onSelectCustomer={handleSelectCustomer} />;
                 }
             };
 
