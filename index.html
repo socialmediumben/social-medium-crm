@@ -413,13 +413,30 @@
             };
 
             return (
-                <div className="h-full bg-gray-100">
-                    {renderMainContent()}
+                <div className="h-screen flex flex-col">
+                    <Toolbar onNavigate={handleNavigate} />
+                    <main className="flex-1 overflow-y-auto">
+                        {renderMainContent()}
+                    </main>
                 </div>
             );
         }
 
         // --- Child Components ---
+
+        function Toolbar({ onNavigate }) {
+            const handleRefresh = () => window.location.reload();
+            return (
+                <header className="bg-white shadow-md p-4 flex justify-between items-center z-20">
+                    <h1 className="text-2xl font-bold text-cyan-700">Social Medium CRM</h1>
+                    <div className="flex items-center space-x-4">
+                        <button onClick={() => onNavigate('dashboard')} className="text-sm font-medium text-gray-600 hover:text-cyan-600">Dashboard</button>
+                        <button onClick={handleRefresh} className="text-sm font-medium text-gray-600 hover:text-cyan-600">Refresh</button>
+                        <button onClick={() => auth.signOut()} className="px-4 py-2 bg-cyan-600 text-white rounded-md text-sm font-medium hover:bg-cyan-700">Logout</button>
+                    </div>
+                </header>
+            );
+        }
 
         function AuthPage() {
             const [isLogin, setIsLogin] = useState(true);
@@ -526,8 +543,8 @@
                             <h3 className="text-xl font-semibold text-gray-800">Reports</h3>
                             <p className="text-gray-500 mt-2">Filter customers by purchase history and activity.</p>
                         </button>
-                        {widgets.map((widget, index) => (
-                            <DashboardWidget key={index} widget={widget} allCustomers={allCustomers} groupsMap={groupsMap} segmentsMap={segmentsMap} onSelectCustomer={onSelectCustomer} onWidgetClick={handleWidgetClick} />
+                        {widgets.map((widget) => (
+                            <DashboardWidget key={widget.id} widget={widget} allCustomers={allCustomers} groupsMap={groupsMap} segmentsMap={segmentsMap} onSelectCustomer={onSelectCustomer} onWidgetClick={handleWidgetClick} />
                         ))}
                     </div>
                 </div>
@@ -993,6 +1010,8 @@
             const [isReportingPeriodOpen, setIsReportingPeriodOpen] = useState(true);
             const [purchaseSearch, setPurchaseSearch] = useState('');
             const [activePopper, setActivePopper] = useState(null);
+            const [renameModal, setRenameModal] = useState(null);
+            const [deleteModal, setDeleteModal] = useState(null);
 
             const filteredItems = useMemo(() => {
                 if (!purchaseSearch) return catalogItems;
@@ -1016,20 +1035,22 @@
                 }
             };
             
-            const handleRename = (report) => {
-                const newName = prompt("Enter new name for the report:", report.name);
-                if (newName) {
-                    onRenameReport(report.id, newName, report.isPersonal);
+            const handleRename = (newName) => {
+                if (newName && renameModal) {
+                    onRenameReport(renameModal.id, newName, renameModal.isPersonal);
                 }
+                setRenameModal(null);
             };
 
-            const handleDelete = (report) => {
-                if (window.confirm(`Are you sure you want to delete the report "${report.name}"?`)) {
-                    onDeleteReport(report.id, report.isPersonal);
+            const handleDelete = () => {
+                if (deleteModal) {
+                    onDeleteReport(deleteModal.id, deleteModal.isPersonal);
                 }
+                setDeleteModal(null);
             };
 
             return (
+                <>
                 <div className="w-1/3 max-w-xs bg-white border-r border-gray-200 flex flex-col p-4 space-y-4 overflow-y-auto">
                     <h2 className="text-xl font-bold">Report Controls</h2>
                     <div className="space-y-2">
@@ -1064,12 +1085,12 @@
                     <div>
                         <button onClick={() => setIsSavedReportsOpen(!isSavedReportsOpen)} className="font-semibold w-full text-left flex justify-between items-center">Saved Reports <span>{isSavedReportsOpen ? '−' : '+'}</span></button>
                         {isSavedReportsOpen && <div className="mt-2 space-y-1 pl-2 border-l-2">
-                            {savedReports.map((r, i) => (
-                                <div key={i} className="flex items-center justify-between text-sm group">
+                            {savedReports.map((r) => (
+                                <div key={r.id} className="flex items-center justify-between text-sm group">
                                     <button onClick={() => onLoadReport(r)} className="hover:underline">{r.name} {r.isPersonal ? '' : '(Shared)'}</button>
                                     <div className="hidden group-hover:flex items-center">
-                                        <button onClick={() => handleRename(r)} className="p-1 hover:bg-gray-200 rounded">✏️</button>
-                                        <button onClick={() => handleDelete(r)} className="p-1 hover:bg-gray-200 rounded">🗑️</button>
+                                        <button onClick={() => setRenameModal(r)} className="p-1 hover:bg-gray-200 rounded">✏️</button>
+                                        <button onClick={() => setDeleteModal(r)} className="p-1 hover:bg-gray-200 rounded">🗑️</button>
                                     </div>
                                 </div>
                             ))}
@@ -1110,6 +1131,9 @@
                         </div>}
                     </div>
                 </div>
+                {renameModal && <RenameModal report={renameModal} onRename={handleRename} onCancel={() => setRenameModal(null)} />}
+                {deleteModal && <DeleteModal report={deleteModal} onDelete={handleDelete} onCancel={() => setDeleteModal(null)} />}
+                </>
             );
         }
         
