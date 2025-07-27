@@ -25,6 +25,60 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo } = React;
 
+        // --- Utility Functions ---
+        const formatSimpleDate = (dateString) => {
+            if (!dateString || dateString === 'N/A') return 'N/A';
+            return new Date(dateString).toLocaleDateString();
+        };
+
+        const formatDetailedDate = (dateString) => {
+            if (!dateString) return 'N/A';
+            return new Date(dateString).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric', hour: 'numeric', minute: 'numeric' });
+        };
+
+        const getNestedValue = (obj, path) => path.reduce((acc, part) => acc && acc[part], obj);
+        
+        const getRelativeDateRange = (period) => {
+            const now = new Date();
+            let start = new Date();
+            let end = new Date();
+
+            switch (period) {
+                case 'yesterday':
+                    start.setDate(now.getDate() - 1);
+                    end.setDate(now.getDate() - 1);
+                    break;
+                case 'lastWeek':
+                    start.setDate(now.getDate() - now.getDay() - 6);
+                    end.setDate(now.getDate() - now.getDay());
+                    break;
+                case 'lastMonth':
+                    start = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+                    end = new Date(now.getFullYear(), now.getMonth(), 0);
+                    break;
+                case 'lastQuarter':
+                    const quarter = Math.floor(now.getMonth() / 3);
+                    start = new Date(now.getFullYear(), quarter * 3 - 3, 1);
+                    end = new Date(now.getFullYear(), quarter * 3, 0);
+                    break;
+                case 'lastYear':
+                    start = new Date(now.getFullYear() - 1, 0, 1);
+                    end = new Date(now.getFullYear() - 1, 11, 31);
+                    break;
+                default:
+                    return { start: '', end: '' };
+            }
+            
+            start.setHours(0, 0, 0, 0);
+            end.setHours(23, 59, 59, 999);
+
+            return {
+                start: start.toISOString().split('T')[0],
+                end: end.toISOString().split('T')[0]
+            };
+        };
+
+
         // --- Main App Component ---
         function App() {
             const [squareAccessToken, setSquareAccessToken] = useState(null);
@@ -39,10 +93,8 @@
             const [customAttrDefs, setCustomAttrDefs] = useState(new Map());
             const [catalogItems, setCatalogItems] = useState([]);
             const [locationId, setLocationId] = useState(null);
-            const [savedReports, setSavedReports] = useState(() => {
-                const saved = localStorage.getItem('savedReports');
-                return saved ? JSON.parse(saved) : [];
-            });
+            const [savedReports, setSavedReports] = useState(() => JSON.parse(localStorage.getItem('savedReports')) || []);
+            const [dashboardWidgets, setDashboardWidgets] = useState(() => JSON.parse(localStorage.getItem('dashboardWidgets')) || []);
             
             // View management
             const [currentView, setCurrentView] = useState('dashboard'); // 'dashboard', 'profile', 'reports', 'directory'
@@ -172,6 +224,12 @@
                 localStorage.setItem('savedReports', JSON.stringify(newReports));
             };
 
+            const handleSaveWidget = (report) => {
+                const newWidgets = [...dashboardWidgets, report];
+                setDashboardWidgets(newWidgets);
+                localStorage.setItem('dashboardWidgets', JSON.stringify(newWidgets));
+            };
+
             const renderMainContent = () => {
                 if (isLoading) return <div className="flex justify-center items-center h-full"><div className="spinner"></div><p className="ml-2">{loadingMessage}</p></div>;
                 if (error) return <div className="text-red-500 text-center">{error}</div>;
@@ -180,12 +238,12 @@
                     case 'profile':
                         return customerDetails ? <CustomerProfile customer={customerDetails} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} apiFetch={apiFetch} onBack={() => setCurrentView('directory')} /> : null;
                     case 'reports':
-                        return <ReportsPage allCustomers={allCustomers} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} onSelectCustomer={handleSelectCustomer} onBack={() => setCurrentView('dashboard')} apiFetch={apiFetch} savedReports={savedReports} onSaveReport={handleSaveReport} catalogItems={catalogItems} locationId={locationId} />;
+                        return <ReportsPage allCustomers={allCustomers} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} onSelectCustomer={handleSelectCustomer} onBack={() => setCurrentView('dashboard')} apiFetch={apiFetch} savedReports={savedReports} onSaveReport={handleSaveReport} onSaveWidget={handleSaveWidget} catalogItems={catalogItems} locationId={locationId} />;
                     case 'directory':
                         return <DirectoryPage allCustomers={allCustomers} onSelectCustomer={handleSelectCustomer} onBack={() => setCurrentView('dashboard')} />;
                     case 'dashboard':
                     default:
-                        return <Dashboard onNavigate={setCurrentView} />;
+                        return <Dashboard onNavigate={setCurrentView} widgets={dashboardWidgets} allCustomers={allCustomers} groupsMap={groupsMap} segmentsMap={segmentsMap} onSelectCustomer={handleSelectCustomer} />;
                 }
             };
 
@@ -218,7 +276,7 @@
             );
         }
 
-        function Dashboard({ onNavigate }) {
+        function Dashboard({ onNavigate, widgets, allCustomers, groupsMap, segmentsMap, onSelectCustomer }) {
             return (
                 <div className="p-8">
                     <h2 className="text-4xl font-bold text-gray-800">Dashboard</h2>
@@ -233,8 +291,56 @@
                             <h3 className="text-xl font-semibold text-gray-800">Reports</h3>
                             <p className="text-gray-500 mt-2">Filter customers by purchase history and activity.</p>
                         </button>
+                        {widgets.map((widget, index) => (
+                            <DashboardWidget key={index} widget={widget} allCustomers={allCustomers} groupsMap={groupsMap} segmentsMap={segmentsMap} onSelectCustomer={onSelectCustomer} />
+                        ))}
                     </div>
                 </div>
+            );
+        }
+
+        function DashboardWidget({ widget, allCustomers, groupsMap, segmentsMap, onSelectCustomer }) {
+             const filteredCustomers = useMemo(() => {
+                let customers = [...allCustomers];
+                // This is a simplified version of the report filtering logic for widgets
+                if (widget.reportingPeriod?.relative !== 'all' && widget.reportingPeriod?.start && widget.reportingPeriod?.end) {
+                    const start = new Date(widget.reportingPeriod.start);
+                    const end = new Date(widget.reportingPeriod.end);
+                    customers = customers.filter(c => {
+                        const createdAt = new Date(c.created_at);
+                        return createdAt >= start && createdAt <= end;
+                    });
+                }
+                
+                return customers.filter(customer => {
+                    return Object.entries(widget.filters).every(([key, filterConfig]) => {
+                        if (!filterConfig || filterConfig.values.size === 0) return true;
+                        const col = widget.columns.find(c => c.key === key);
+                        if (!col) return true;
+                        let customerValue;
+                        if (col.key === 'groups') {
+                            customerValue = [...(customer.group_ids || []).map(id => groupsMap.get(id) || ''), ...(customer.segment_ids || []).map(id => segmentsMap.get(id) || '')].join(', ');
+                        } else {
+                            customerValue = (getNestedValue(customer, col.path) || 'N/A').toString();
+                        }
+                        return filterConfig.values.has(customerValue);
+                    });
+                });
+            }, [widget, allCustomers, groupsMap, segmentsMap]);
+
+            return (
+                 <div className="p-6 bg-white rounded-lg shadow">
+                    <h3 className="text-xl font-semibold text-gray-800">{widget.name}</h3>
+                    <span className="text-sm text-gray-500">{filteredCustomers.length} customers</span>
+                    <ul className="mt-2 space-y-1 max-h-48 overflow-y-auto">
+                        {filteredCustomers.slice(0, 10).map(c => (
+                            <li key={c.id}>
+                                <button onClick={() => onSelectCustomer(c)} className="text-sm text-cyan-600 hover:underline">{c.given_name} {c.family_name}</button>
+                            </li>
+                        ))}
+                    </ul>
+                    {filteredCustomers.length > 10 && <p className="text-xs text-gray-400 mt-1">...and {filteredCustomers.length - 10} more.</p>}
+                 </div>
             );
         }
         
@@ -274,12 +380,513 @@
             );
         }
 
-        function ReportsPage({ allCustomers, groupsMap, segmentsMap, customAttrDefs, onSelectCustomer, onBack, apiFetch, savedReports, onSaveReport, catalogItems, locationId }) {
-            // ... (Component logic will be here)
+        function ReportsPage({ allCustomers, groupsMap, segmentsMap, customAttrDefs, onSelectCustomer, onBack, apiFetch, savedReports, onSaveReport, onSaveWidget, catalogItems, locationId }) {
+            const getInitialColumns = () => {
+                const standardColumns = [
+                    { key: 'given_name', label: 'First Name', visible: true, path: ['given_name'] },
+                    { key: 'family_name', label: 'Last Name', visible: true, path: ['family_name'] },
+                    { key: 'email_address', label: 'Email', visible: true, path: ['email_address'] },
+                    { key: 'phone_number', label: 'Phone', visible: true, path: ['phone_number'] },
+                    { key: 'created_at', label: 'Customer Since', visible: true, path: ['created_at'] },
+                    { key: 'groups', label: 'Groups', visible: true, path: [] },
+                ];
+                const customColumns = Array.from(customAttrDefs.values()).map(def => ({
+                    key: def.key, label: def.name, visible: false, isCustom: true, path: ['custom_attributes', def.key, 'value']
+                }));
+                return [...standardColumns, ...customColumns];
+            };
+
+            const [columns, setColumns] = useState(getInitialColumns);
+            const [filters, setFilters] = useState({});
+            const [sortConfig, setSortConfig] = useState({ key: 'given_name', direction: 'ascending' });
+            const [purchaseDataCache, setPurchaseDataCache] = useState({});
+            const [isFetchingData, setIsFetchingData] = useState(false);
+            const [activeFilterPopup, setActiveFilterPopup] = useState(null);
+            const [reportingPeriod, setReportingPeriod] = useState({ start: '', end: '', relative: 'all' });
+            
+            const visibleColumns = useMemo(() => columns.filter(c => c.visible), [columns]);
+            
+            const handleAddPurchaseColumn = async (item, displayMode) => {
+                const columnKey = `${item.id}-${displayMode}`;
+                const itemName = item.item_data.name;
+                const existingCol = columns.find(c => c.key === columnKey);
+
+                if (existingCol) {
+                    setColumns(prev => prev.filter(c => c.key !== columnKey));
+                } else {
+                    let label = '';
+                    if (displayMode === 'yesNo') label = `${itemName} (Purchased)`;
+                    if (displayMode === 'lastDate') label = `${itemName} (Last Purchase)`;
+                    if (displayMode === 'quantity') label = `${itemName} (Qty)`;
+                    
+                    setColumns(prev => [...prev, { key: columnKey, label, visible: true, isPurchase: true, itemId: item.id, displayMode }]);
+                    
+                    fetchPurchaseData(item);
+                }
+            };
+            
+            const fetchPurchaseData = async (item) => {
+                setIsFetchingData(true);
+                try {
+                    const variationIds = item.item_data.variations.map(v => v.id);
+                    const filter = {
+                        state_filter: { states: ["COMPLETED"] },
+                        line_item_filter: { catalog_object_ids: variationIds }
+                    };
+                    
+                    let currentReportingPeriod = {...reportingPeriod};
+                    if(reportingPeriod.relative !== 'all' && reportingPeriod.relative !== 'custom') {
+                        currentReportingPeriod = getRelativeDateRange(reportingPeriod.relative);
+                    }
+
+                    if (currentReportingPeriod.start && currentReportingPeriod.end) {
+                        const start = new Date(currentReportingPeriod.start);
+                        const end = new Date(currentReportingPeriod.end);
+                        end.setHours(23, 59, 59, 999);
+                        filter.date_time_filter = { closed_at: { start_at: start.toISOString(), end_at: end.toISOString() } };
+                    }
+                    const orderSearchData = await apiFetch('/v2/orders/search', {
+                        method: 'POST',
+                        body: JSON.stringify({ location_ids: [locationId], query: { filter } })
+                    });
+                    
+                    const customerPurchaseData = new Map();
+                    (orderSearchData.orders || []).forEach(order => {
+                        if (!order.customer_id) return;
+                        const customerData = customerPurchaseData.get(order.customer_id) || { quantity: 0, lastDate: null };
+                        order.line_items.forEach(lineItem => {
+                            if (variationIds.includes(lineItem.catalog_object_id)) {
+                                customerData.quantity += parseInt(lineItem.quantity, 10);
+                                if (order.closed_at && (!customerData.lastDate || order.closed_at > customerData.lastDate)) {
+                                    customerData.lastDate = order.closed_at;
+                                }
+                            }
+                        });
+                        customerPurchaseData.set(order.customer_id, customerData);
+                    });
+                    setPurchaseDataCache(prev => ({ ...prev, [item.id]: customerPurchaseData }));
+                } catch (err) {
+                    console.error("Error fetching purchase data:", err);
+                } finally {
+                    setIsFetchingData(false);
+                }
+            };
+
+            useEffect(() => {
+                const visiblePurchaseItems = columns.filter(c => c.isPurchase && c.visible).map(c => catalogItems.find(item => item.id === c.itemId));
+                if (visiblePurchaseItems.length > 0) {
+                    setPurchaseDataCache({});
+                    visiblePurchaseItems.forEach(item => {
+                        if (item) fetchPurchaseData(item);
+                    });
+                }
+            }, [reportingPeriod]);
+            
+            const filteredAndSortedCustomers = useMemo(() => {
+                let sortableItems = [...allCustomers];
+                let filtered = sortableItems.filter(customer => {
+                    return Object.entries(filters).every(([key, filterConfig]) => {
+                        if (!filterConfig) return true;
+                        
+                        const col = columns.find(c => c.key === key);
+                        let customerValue;
+
+                        if (filterConfig.values && filterConfig.values.size > 0) {
+                            if (col.isPurchase) {
+                                const data = purchaseDataCache[col.itemId]?.get(customer.id);
+                                if (col.displayMode === 'quantity') customerValue = (data?.quantity || 0).toString();
+                                else if (col.displayMode === 'lastDate') customerValue = data ? formatSimpleDate(data.lastDate) : 'N/A';
+                                else customerValue = data ? 'Yes' : 'No';
+                            } else if (col.key === 'groups') {
+                                customerValue = [...(customer.group_ids || []).map(id => groupsMap.get(id) || ''), ...(customer.segment_ids || []).map(id => segmentsMap.get(id) || '')].join(', ');
+                            } else {
+                                customerValue = (getNestedValue(customer, col.path) || 'N/A').toString();
+                            }
+                            if (!filterConfig.values.has(customerValue)) return false;
+                        }
+
+                        if (filterConfig.condition && filterConfig.condition.type !== 'none') {
+                            if (!col.isPurchase || col.displayMode !== 'quantity') return true;
+                            
+                            const numValue = purchaseDataCache[col.itemId]?.get(customer.id)?.quantity || 0;
+                            const { type, value1, value2 } = filterConfig.condition;
+                            const num1 = parseFloat(value1);
+                            const num2 = parseFloat(value2);
+
+                            if (type === 'greaterThan' && (isNaN(num1) || numValue <= num1)) return false;
+                            if (type === 'lessThan' && (isNaN(num1) || numValue >= num1)) return false;
+                            if (type === 'between' && (isNaN(num1) || isNaN(num2) || numValue < num1 || numValue > num2)) return false;
+                        }
+                        
+                        return true;
+                    });
+                });
+
+                if (sortConfig.key) {
+                    filtered.sort((a, b) => {
+                        const col = columns.find(c => c.key === sortConfig.key);
+                        let aVal, bVal;
+                        if (col?.isPurchase) {
+                            const aData = purchaseDataCache[col.itemId]?.get(a.id);
+                            const bData = purchaseDataCache[col.itemId]?.get(b.id);
+                            if (col.displayMode === 'quantity') { aVal = aData?.quantity || 0; bVal = bData?.quantity || 0; }
+                            else if (col.displayMode === 'lastDate') { aVal = aData?.lastDate || ''; bVal = bData?.lastDate || ''; }
+                            else { aVal = !!aData; bVal = !!bData; }
+                        } else if (col?.key === 'groups') { aVal = ''; bVal = ''; }
+                        else { aVal = getNestedValue(a, col?.path || []) || ''; bVal = getNestedValue(b, col?.path || []) || ''; }
+                        if (aVal < bVal) return sortConfig.direction === 'ascending' ? -1 : 1;
+                        if (aVal > bVal) return sortConfig.direction === 'ascending' ? 1 : -1;
+                        return 0;
+                    });
+                }
+                return filtered;
+            }, [allCustomers, filters, sortConfig, columns, purchaseDataCache]);
+            
+            const handleSaveReportClick = (isWidget) => {
+                const name = window.prompt("Enter a name for this report:");
+                if (name) {
+                    const report = { name, filters, sortConfig, columns, reportingPeriod };
+                    if (isWidget) {
+                        onSaveWidget(report);
+                    } else {
+                        onSaveReport(report);
+                    }
+                }
+            };
+            
+            const handleLoadReport = (report) => {
+                setFilters(report.filters);
+                setSortConfig(report.sortConfig);
+                setColumns(report.columns);
+                setReportingPeriod(report.reportingPeriod || { start: '', end: '', relative: 'all' });
+            };
+
+            return (
+                <div className="flex h-full">
+                    <ReportsSidebar 
+                        columns={columns} 
+                        setColumns={setColumns}
+                        savedReports={savedReports}
+                        onLoadReport={handleLoadReport}
+                        onSaveReportClick={handleSaveReportClick}
+                        onSaveWidgetClick={() => handleSaveReportClick(true)}
+                        catalogItems={catalogItems}
+                        onAddPurchaseColumn={handleAddPurchaseColumn}
+                        reportingPeriod={reportingPeriod}
+                        setReportingPeriod={setReportingPeriod}
+                    />
+                    <div className="flex-1 p-8 overflow-y-auto">
+                         <button onClick={onBack} className="mb-6 text-cyan-600 hover:text-cyan-800"> &larr; Back to Dashboard</button>
+                         <h2 className="text-4xl font-bold text-gray-800">Customer Report</h2>
+                         <p className="text-gray-500">A complete list of all customers in your directory.</p>
+                         <div className="mt-8 bg-white rounded-lg shadow overflow-x-auto">
+                            <table className="w-full text-sm text-left text-gray-500">
+                                <thead className="text-xs text-gray-700 uppercase bg-gray-50">
+                                    <tr>{visibleColumns.map(col => <SortableHeader key={col.key} col={col} setSortConfig={setSortConfig} sortConfig={sortConfig} setActiveFilterPopup={setActiveFilterPopup} />)}</tr>
+                                </thead>
+                                <tbody>
+                                    {isFetchingData && <tr><td colSpan={visibleColumns.length} className="text-center p-4"><div className="flex items-center justify-center"><div className="spinner mr-2"></div>Fetching data...</div></td></tr>}
+                                    {filteredAndSortedCustomers.map(customer => (
+                                        <tr key={customer.id} className="bg-white border-b hover:bg-gray-50">
+                                            {visibleColumns.map(col => (
+                                                <td key={col.key} className="px-6 py-4">
+                                                    {col.key === 'given_name' ? (<button onClick={() => onSelectCustomer(customer)} className="text-cyan-600 hover:underline font-medium whitespace-nowrap">{customer.given_name} {customer.family_name}</button>) 
+                                                    : col.key === 'groups' ? (<div className="flex flex-wrap gap-1">{[...(customer.group_ids || []).map(id => groupsMap.get(id) || '...'), ...(customer.segment_ids || []).map(id => segmentsMap.get(id) || '...')].map((name, i) => <Pill key={i} text={name} />)}</div>) 
+                                                    : col.isPurchase ? (
+                                                        col.displayMode === 'yesNo' ? (purchaseDataCache[col.itemId]?.has(customer.id) ? '✓' : '') :
+                                                        col.displayMode === 'lastDate' ? (formatSimpleDate(purchaseDataCache[col.itemId]?.get(customer.id)?.lastDate)) :
+                                                        col.displayMode === 'quantity' ? (purchaseDataCache[col.itemId]?.get(customer.id)?.quantity || 0) : ''
+                                                    )
+                                                    : col.path.includes('created_at') ? (formatSimpleDate(getNestedValue(customer, col.path))) 
+                                                    : (getNestedValue(customer, col.path) || 'N/A')}
+                                                </td>
+                                            ))}
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                    {activeFilterPopup && <FilterPopup column={activeFilterPopup} allCustomers={allCustomers} filters={filters} setFilters={setFilters} onClose={() => setActiveFilterPopup(null)} getNestedValue={getNestedValue} groupsMap={groupsMap} segmentsMap={segmentsMap} purchaseDataCache={purchaseDataCache} />}
+                </div>
+            );
+        }
+
+        const SortableHeader = ({ col, setSortConfig, sortConfig, setActiveFilterPopup }) => {
+            const isSorted = sortConfig.key === col.key;
+            return (
+                <th scope="col" className="px-6 py-3">
+                    <div className="flex items-center">
+                        <button onClick={() => setSortConfig({ key: col.key, direction: sortConfig.key === col.key && sortConfig.direction === 'ascending' ? 'descending' : 'ascending' })} className="uppercase">
+                            {col.label}
+                            {isSorted ? (sortConfig.direction === 'ascending' ? ' ▲' : ' ▼') : null}
+                        </button>
+                        <button onClick={() => setActiveFilterPopup(col)} className="ml-2">
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2a1 1 0 01-.293.707L16 11.414V16a1 1 0 01-.293.707l-2 2A1 1 0 0113 18v-1.586l-3.707-3.707A1 1 0 019 12V6a1 1 0 01-.293-.707L8 4H4a1 1 0 01-1-1z"></path></svg>
+                        </button>
+                    </div>
+                </th>
+            );
+        };
+
+        function FilterPopup({ column, allCustomers, filters, setFilters, onClose, getNestedValue, groupsMap, segmentsMap, purchaseDataCache }) {
+            const getColumnValues = () => {
+                const values = new Set();
+                allCustomers.forEach(customer => {
+                    let value;
+                    if (column.isPurchase) {
+                        const data = purchaseDataCache[column.itemId]?.get(customer.id);
+                        if (column.displayMode === 'quantity') value = (data?.quantity || 0).toString();
+                        else if (column.displayMode === 'lastDate') value = data ? formatSimpleDate(data.lastDate) : 'N/A';
+                        else value = data ? 'Yes' : 'No';
+                    } else if (column.key === 'groups') {
+                        [...(customer.group_ids || []).map(id => groupsMap.get(id) || ''), ...(customer.segment_ids || []).map(id => segmentsMap.get(id) || '')].forEach(g => values.add(g));
+                        return;
+                    } else {
+                        value = getNestedValue(customer, column.path) || 'N/A';
+                        if (column.path.includes('created_at')) value = formatSimpleDate(value);
+                    }
+                    values.add(value.toString());
+                });
+                return Array.from(values).sort();
+            };
+            
+            const [uniqueValues] = useState(getColumnValues);
+            const [checkedValues, setCheckedValues] = useState(filters[column.key]?.values || new Set(uniqueValues));
+            const [condition, setCondition] = useState(filters[column.key]?.condition || { type: 'none', value1: '', value2: '' });
+            const [searchTerm, setSearchTerm] = useState('');
+            
+            const isNumeric = column.isPurchase && column.displayMode === 'quantity';
+
+            const handleCheck = (value) => {
+                const newChecked = new Set(checkedValues);
+                if (newChecked.has(value)) newChecked.delete(value);
+                else newChecked.add(value);
+                setCheckedValues(newChecked);
+            };
+
+            const handleSelectAll = () => setCheckedValues(new Set(uniqueValues));
+            const handleClear = () => setCheckedValues(new Set());
+
+            const handleApply = () => {
+                setFilters(prev => ({ ...prev, [column.key]: { values: checkedValues, condition } }));
+                onClose();
+            };
+
+            const filteredUniqueValues = useMemo(() => {
+                if (!searchTerm) return uniqueValues;
+                return uniqueValues.filter(v => v.toLowerCase().includes(searchTerm.toLowerCase()));
+            }, [searchTerm, uniqueValues]);
+
+            return (
+                <div className="fixed inset-0 bg-black bg-opacity-25 flex items-center justify-center z-30" onClick={onClose}>
+                    <div className="bg-white rounded-lg shadow-xl p-4 w-full max-w-sm" onClick={e => e.stopPropagation()}>
+                        <h3 className="font-bold text-lg">Filter by {column.label}</h3>
+                        
+                        {isNumeric && (
+                            <div className="mt-4 border-t pt-4">
+                                <h4 className="text-sm font-semibold mb-2">Filter by condition</h4>
+                                <select value={condition.type} onChange={e => setCondition(c => ({...c, type: e.target.value}))} className="w-full p-1 border rounded-md text-sm">
+                                    <option value="none">None</option>
+                                    <option value="greaterThan">Greater than</option>
+                                    <option value="lessThan">Less than</option>
+                                    <option value="between">Between</option>
+                                </select>
+                                {['greaterThan', 'lessThan'].includes(condition.type) && (
+                                    <input type="number" value={condition.value1} onChange={e => setCondition(c => ({...c, value1: e.target.value}))} className="w-full mt-1 p-1 border rounded-md text-sm" />
+                                )}
+                                {condition.type === 'between' && (
+                                    <div className="flex items-center space-x-2 mt-1">
+                                        <input type="number" value={condition.value1} onChange={e => setCondition(c => ({...c, value1: e.target.value}))} className="w-full p-1 border rounded-md text-sm" />
+                                        <span>and</span>
+                                        <input type="number" value={condition.value2} onChange={e => setCondition(c => ({...c, value2: e.target.value}))} className="w-full p-1 border rounded-md text-sm" />
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        <div className="mt-4 border-t pt-4">
+                             <h4 className="text-sm font-semibold mb-2">Filter by values</h4>
+                            <div className="my-2 flex space-x-2">
+                                <button onClick={handleSelectAll} className="text-sm text-cyan-600 hover:underline">Select all</button>
+                                <button onClick={handleClear} className="text-sm text-cyan-600 hover:underline">Clear</button>
+                            </div>
+                            <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Search values..." className="w-full px-2 py-1 border rounded-md text-sm mb-2"/>
+                            <div className="max-h-40 overflow-y-auto border rounded-md p-2">
+                                {filteredUniqueValues.map(value => (
+                                    <label key={value} className="flex items-center text-sm">
+                                        <input type="checkbox" checked={checkedValues.has(value)} onChange={() => handleCheck(value)} className="mr-2"/>
+                                        {value}
+                                    </label>
+                                ))}
+                            </div>
+                        </div>
+
+                        <div className="mt-4 flex justify-end space-x-2">
+                            <button onClick={onClose} className="px-4 py-2 bg-gray-200 rounded-md">Cancel</button>
+                            <button onClick={handleApply} className="px-4 py-2 bg-cyan-600 text-white rounded-md">OK</button>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        function ReportsSidebar({ columns, setColumns, savedReports, onLoadReport, onSaveReportClick, onSaveWidgetClick, catalogItems, onAddPurchaseColumn, reportingPeriod, setReportingPeriod }) {
+            const [isColumnsOpen, setIsColumnsOpen] = useState(true);
+            const [isSavedReportsOpen, setIsSavedReportsOpen] = useState(true);
+            const [isPurchaseHistoryOpen, setIsPurchaseHistoryOpen] = useState(true);
+            const [isReportingPeriodOpen, setIsReportingPeriodOpen] = useState(true);
+            const [purchaseSearch, setPurchaseSearch] = useState('');
+            const [activePopper, setActivePopper] = useState(null);
+
+            const filteredItems = useMemo(() => {
+                if (!purchaseSearch) return catalogItems;
+                return catalogItems.filter(item => item.item_data.name.toLowerCase().includes(purchaseSearch.toLowerCase()));
+            }, [purchaseSearch, catalogItems]);
+
+            const handleColumnToggle = (key) => {
+                if (columns.find(c => c.key === key)?.isPurchase) {
+                    setColumns(prev => prev.filter(c => c.key !== key));
+                } else {
+                    setColumns(prev => prev.map(c => c.key === key ? { ...c, visible: !c.visible } : c));
+                }
+            };
+
+            const handleRelativeDateChange = (e) => {
+                const period = e.target.value;
+                if (period === 'custom') {
+                    setReportingPeriod({ ...reportingPeriod, relative: 'custom' });
+                } else {
+                    setReportingPeriod({ start: '', end: '', relative: period });
+                }
+            };
+
+            return (
+                <div className="w-1/3 max-w-xs bg-white border-r border-gray-200 flex flex-col p-4 space-y-4 overflow-y-auto">
+                    <h2 className="text-xl font-bold">Report Controls</h2>
+                    <div className="space-y-2">
+                        <button onClick={onSaveReportClick} className="w-full px-4 py-2 bg-cyan-600 text-white rounded-md shadow-sm hover:bg-cyan-700">Save Report</button>
+                        <button onClick={onSaveWidgetClick} className="w-full px-4 py-2 bg-green-500 text-white rounded-md shadow-sm hover:bg-green-600">Save as Widget</button>
+                        <button onClick={() => {}} className="w-full px-4 py-2 bg-gray-200 text-gray-700 rounded-md shadow-sm hover:bg-gray-300">Export CSV</button>
+                    </div>
+                    
+                    <div>
+                        <button onClick={() => setIsReportingPeriodOpen(!isReportingPeriodOpen)} className="font-semibold w-full text-left flex justify-between items-center">Reporting Period <span>{isReportingPeriodOpen ? '−' : '+'}</span></button>
+                        {isReportingPeriodOpen && <div className="mt-2 space-y-2 pl-2 border-l-2">
+                            <select onChange={handleRelativeDateChange} value={reportingPeriod.relative} className="w-full px-2 py-1 border rounded-md text-sm">
+                                <option value="all">All Time</option>
+                                <option value="yesterday">Yesterday</option>
+                                <option value="lastWeek">Last Week</option>
+                                <option value="lastMonth">Last Month</option>
+                                <option value="lastQuarter">Last Quarter</option>
+                                <option value="lastYear">Last Year</option>
+                                <option value="custom">Custom Range</option>
+                            </select>
+                            {reportingPeriod.relative === 'custom' && <>
+                                <div>
+                                    <label className="text-sm">Start Date</label>
+                                    <input type="date" value={reportingPeriod.start} onChange={e => setReportingPeriod(p => ({...p, start: e.target.value}))} className="w-full px-2 py-1 border rounded-md text-sm"/>
+                                </div>
+                                <div>
+                                    <label className="text-sm">End Date</label>
+                                    <input type="date" value={reportingPeriod.end} onChange={e => setReportingPeriod(p => ({...p, end: e.target.value}))} className="w-full px-2 py-1 border rounded-md text-sm"/>
+                                </div>
+                            </>}
+                        </div>}
+                    </div>
+
+                    <div>
+                        <button onClick={() => setIsSavedReportsOpen(!isSavedReportsOpen)} className="font-semibold w-full text-left flex justify-between items-center">Saved Reports <span>{isSavedReportsOpen ? '−' : '+'}</span></button>
+                        {isSavedReportsOpen && <div className="mt-2 space-y-1 pl-2 border-l-2">
+                            {savedReports.length > 0 ? savedReports.map((r, i) => <button key={i} onClick={() => onLoadReport(r)} className="block text-sm hover:underline">{r.name}</button>) : <p className="text-sm text-gray-500">None yet.</p>}
+                        </div>}
+                    </div>
+
+                    <div>
+                        <button onClick={() => setIsColumnsOpen(!isColumnsOpen)} className="font-semibold w-full text-left flex justify-between items-center">Columns <span>{isColumnsOpen ? '−' : '+'}</span></button>
+                        {isColumnsOpen && <div className="mt-2 space-y-1 pl-2 border-l-2 max-h-60 overflow-y-auto">
+                           {columns.map(col => (
+                                <label key={col.key} className="flex items-center text-sm">
+                                    <input type="checkbox" checked={col.visible} onChange={() => handleColumnToggle(col.key)} className="mr-2"/>
+                                    <span className={col.isCustom ? 'italic' : ''}>{col.label}</span>
+                                </label>
+                            ))}
+                        </div>}
+                    </div>
+                    
+                    <div>
+                        <button onClick={() => setIsPurchaseHistoryOpen(!isPurchaseHistoryOpen)} className="font-semibold w-full text-left flex justify-between items-center">Purchase History <span>{isPurchaseHistoryOpen ? '−' : '+'}</span></button>
+                        {isPurchaseHistoryOpen && <div className="mt-2 space-y-1 pl-2 border-l-2">
+                            <input type="text" value={purchaseSearch} onChange={e => setPurchaseSearch(e.target.value)} placeholder="Search items..." className="w-full px-2 py-1 border rounded-md text-sm mb-2"/>
+                            <div className="max-h-60 overflow-y-auto">
+                                {filteredItems.map(item => (
+                                    <div key={item.id} className="flex items-center text-sm justify-between relative">
+                                        <span>{item.item_data.name}</span>
+                                        <button onClick={() => setActivePopper(activePopper === item.id ? null : item.id)} className="ml-2 px-2 py-0.5 bg-gray-200 rounded hover:bg-gray-300">+</button>
+                                        {activePopper === item.id && (
+                                            <div className="absolute left-full ml-2 w-48 bg-white rounded-md shadow-lg z-20 p-2 border">
+                                                <button onClick={() => {onAddPurchaseColumn(item, 'yesNo'); setActivePopper(null);}} className="block w-full text-left text-sm p-1 hover:bg-gray-100">Purchased (Yes/No)</button>
+                                                <button onClick={() => {onAddPurchaseColumn(item, 'lastDate'); setActivePopper(null);}} className="block w-full text-left text-sm p-1 hover:bg-gray-100">Last Purchase Date</button>
+                                                <button onClick={() => {onAddPurchaseColumn(item, 'quantity'); setActivePopper(null);}} className="block w-full text-left text-sm p-1 hover:bg-gray-100">Total Quantity</button>
+                                            </div>
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>}
+                    </div>
+                </div>
+            );
         }
 
         function CustomerProfile({ customer, groupsMap, segmentsMap, customAttrDefs, apiFetch, onBack }) {
-            // ... (Component logic will be here)
+            const [customAttrs, setCustomAttrs] = useState({});
+            const [fetchingAttrs, setFetchingAttrs] = useState({});
+
+            const fetchAttribute = async (def) => {
+                setFetchingAttrs(prev => ({...prev, [def.key]: true}));
+                try {
+                    const attr = await apiFetch(`/v2/customers/${customer.id}/custom-attributes/${def.key}`);
+                    setCustomAttrs(prev => ({...prev, [def.key]: attr.custom_attribute?.value || 'N/A'}));
+                } catch (e) {
+                    setCustomAttrs(prev => ({...prev, [def.key]: 'Error'}));
+                } finally {
+                    setFetchingAttrs(prev => ({...prev, [def.key]: false}));
+                }
+            };
+            
+            const formatAddress = (address) => {
+                if (!address) return 'N/A';
+                const parts = [ address.address_line_1, address.address_line_2, `${address.locality || ''} ${address.administrative_district_level_1 || ''} ${address.postal_code || ''}`.trim(), address.country ];
+                return parts.filter(Boolean).join(', ');
+            };
+            return (
+                <div>
+                    <button onClick={onBack} className="mb-6 text-cyan-600 hover:text-cyan-800"> &larr; Back to Previous Page</button>
+                    <h2 className="text-4xl font-bold text-gray-800">{customer.given_name} {customer.family_name}</h2>
+                    <p className="text-gray-500">Customer since {formatDetailedDate(customer.created_at)}</p>
+                    <div className="mt-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                        <InfoCard title="Contact Information"><InfoItem label="Email" value={customer.email_address} /><InfoItem label="Phone" value={customer.phone_number} /></InfoCard>
+                        <InfoCard title="Address"><p className="text-gray-800">{formatAddress(customer.address)}</p></InfoCard>
+                        <InfoCard title="Stats"><InfoItem label="Last Visit" value={customer.last_visit ? formatDetailedDate(customer.last_visit) : 'No visits found'} /><InfoItem label="Source" value={customer.creation_source} /></InfoCard>
+                        <InfoCard title="Details" className="md:col-span-2 lg:col-span-1"><InfoItem label="Birthday" value={customer.birthday} /><InfoItem label="Company" value={customer.company_name} /><InfoItem label="Reference ID" value={customer.reference_id} /></InfoCard>
+                        <InfoCard title="Groups & Segments" className="md:col-span-3"><div className="flex flex-wrap gap-2">{(customer.group_ids || []).map(id => <Pill key={id} text={groupsMap.get(id) || id} />)}{(customer.segment_ids || []).map(id => <Pill key={id} text={segmentsMap.get(id) || id} color="bg-green-100 text-green-800" />)}</div></InfoCard>
+                        <InfoCard title="Custom Fields" className="md:col-span-3">
+                            {Array.from(customAttrDefs.values()).map(def => (
+                                <div key={def.key} className="flex justify-between items-center">
+                                    <InfoItem label={def.name} value={customAttrs[def.key]} />
+                                    {!customAttrs[def.key] && (
+                                        <button onClick={() => fetchAttribute(def)} disabled={fetchingAttrs[def.key]} className="px-3 py-1 text-xs bg-gray-200 rounded hover:bg-gray-300">
+                                            {fetchingAttrs[def.key] ? <div className="spinner"></div> : 'Fetch Data'}
+                                        </button>
+                                    )}
+                                </div>
+                            ))}
+                        </InfoCard>
+                        <InfoCard title="Notes" className="md:col-span-3"><p className="text-gray-700 whitespace-pre-wrap">{customer.note || 'No notes for this customer.'}</p></InfoCard>
+                    </div>
+                </div>
+            );
         }
         
         const InfoCard = ({ title, children, className }) => (<div className={`bg-white p-6 rounded-lg shadow ${className || ''}`}><h3 className="text-lg font-semibold text-gray-800 border-b pb-2 mb-4">{title}</h3><div className="space-y-3">{children}</div></div>);
