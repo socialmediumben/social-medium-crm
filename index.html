@@ -216,7 +216,7 @@
                             if (customAttrData.custom_attribute_definitions) {
                                 setCustomAttrDefs(new Map(customAttrData.custom_attribute_definitions.map(def => [def.key, def])));
                             }
-                            if (catalogData.objects) setCatalogItems(catalogData.objects);
+                            if (catalogData.objects) setCatalogItems(catalogData.objects.sort((a, b) => a.item_data.name.localeCompare(b.item_data.name)));
                             
                             const activeLocation = locationData.locations?.find(loc => loc.status === 'ACTIVE');
                             if (activeLocation) {
@@ -1005,7 +1005,7 @@
         }
 
         function ReportsSidebar({ columns, setColumns, savedReports, onLoadReport, onSaveReportClick, catalogItems, onRenameReport, onDeleteReport, purchaseFilterGroups, onFilterBuilderClick }) {
-            const [openSections, setOpenSections] = useState({ period: true, reports: true, columns: true, purchase: true, activeFilters: true, activeColumns: true });
+            const [openSections, setOpenSections] = useState({ reports: true, columns: true, activeFilters: true, activeColumns: true });
             const [renameModal, setRenameModal] = useState(null);
             const [deleteModal, setDeleteModal] = useState(null);
             
