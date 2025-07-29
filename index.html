@@ -652,7 +652,7 @@
             const [purchaseFilterGroups, setPurchaseFilterGroups] = useState({ include: [], exclude: [] });
             const [sortConfig, setSortConfig] = useState({ key: 'given_name', direction: 'ascending' });
             const [purchaseDataCache, setPurchaseDataCache] = useState({});
-            const [isPurchaseDataLoading, setIsPurchaseDataLoading] = useState(false);
+            const [isFetchingData, setIsFetchingData] = useState(false);
             const [activeFieldFilterPopup, setActiveFieldFilterPopup] = useState(null);
             const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
             
@@ -663,8 +663,9 @@
                 if (!item) return;
 
                 const cacheKey = `${itemId}-${period.relative}-${period.start}-${period.end}`;
-                if(purchaseDataCache[cacheKey]) return;
+                if(purchaseDataCache[cacheKey]) return; // Already fetched
 
+                setIsFetchingData(true);
                 try {
                     const variationIds = item.item_data.variations.map(v => v.id);
                     const filter = {
@@ -699,45 +700,27 @@
                     setPurchaseDataCache(prev => ({ ...prev, [cacheKey]: customerPurchaseData }));
                 } catch (err) {
                     console.error("Error fetching purchase data for item " + itemId, err);
+                } finally {
+                    setIsFetchingData(false);
                 }
-            }, [apiFetch, locationId, catalogItems]);
+            }, [apiFetch, locationId, catalogItems, purchaseDataCache]);
 
             useEffect(() => {
                 const allRules = [...purchaseFilterGroups.include, ...purchaseFilterGroups.exclude];
-                const fetchesToRun = [];
-
                 allRules.forEach(rule => {
-                    const cacheKey = `${rule.itemId}-${rule.period.relative}-${rule.period.start}-${rule.period.end}`;
-                    if (!purchaseDataCache[cacheKey]) {
-                        fetchesToRun.push(fetchPurchaseData(rule.itemId, rule.period));
-                    }
+                    fetchPurchaseData(rule.itemId, rule.period);
                 });
-
-                if (fetchesToRun.length > 0) {
-                    setIsPurchaseDataLoading(true);
-                    Promise.all(fetchesToRun).then(() => {
-                        setIsPurchaseDataLoading(false);
-                    });
-                }
-            }, [purchaseFilterGroups, purchaseDataCache, fetchPurchaseData]);
+            }, [purchaseFilterGroups, fetchPurchaseData]);
             
             const filteredAndSortedCustomers = useMemo(() => {
-                if (isPurchaseDataLoading) {
-                    return [];
-                }
-
                 let customers = [...allCustomers];
                 
                 // Inclusion/Exclusion Logic
                 if (purchaseFilterGroups.include.length > 0) {
                     const includedCustomerSets = purchaseFilterGroups.include.map(rule => {
                         const cacheKey = `${rule.itemId}-${rule.period.relative}-${rule.period.start}-${rule.period.end}`;
-                        return purchaseDataCache[cacheKey];
+                        return purchaseDataCache[cacheKey] || new Set();
                     });
-
-                    if (includedCustomerSets.some(set => set === undefined)) {
-                        return []; // Data is not ready yet, wait for re-render
-                    }
 
                     const includedCustomerIds = includedCustomerSets.reduce((acc, currentSet) => {
                         if (acc === null) return currentSet;
@@ -746,20 +729,14 @@
 
                     if (includedCustomerIds) {
                         customers = customers.filter(c => includedCustomerIds.has(c.id));
-                    } else {
-                        customers = [];
                     }
                 }
 
                 if (purchaseFilterGroups.exclude.length > 0) {
                      const excludedCustomerSets = purchaseFilterGroups.exclude.map(rule => {
                         const cacheKey = `${rule.itemId}-${rule.period.relative}-${rule.period.start}-${rule.period.end}`;
-                        return purchaseDataCache[cacheKey];
+                        return purchaseDataCache[cacheKey] || new Set();
                     });
-
-                    if (excludedCustomerSets.some(set => set === undefined)) {
-                        return []; // Data is not ready yet, wait for re-render
-                    }
                     
                     const excludedCustomerIds = excludedCustomerSets.reduce((acc, currentSet) => {
                         return new Set([...acc, ...currentSet]);
@@ -817,7 +794,7 @@
                     });
                 }
                 return customers;
-            }, [allCustomers, fieldFilters, purchaseFilterGroups, sortConfig, fields, purchaseDataCache, groupsMap, segmentsMap, isPurchaseDataLoading]);
+            }, [allCustomers, fieldFilters, purchaseFilterGroups, sortConfig, fields, purchaseDataCache, groupsMap, segmentsMap]);
             
             const handleModalSave = (name, isWidget, isShared) => {
                 const report = { name, filters: fieldFilters, purchaseFilterGroups, sortConfig, fields, isWidget, isShared };
@@ -867,9 +844,9 @@
                                     <tr>{visibleFields.map(field => <SortableHeader key={field.key} field={field} setSortConfig={setSortConfig} sortConfig={sortConfig} setActiveFilterPopup={setActiveFieldFilterPopup} filters={fieldFilters} />)}</tr>
                                 </thead>
                                 <tbody>
-                                    {(isPurchaseDataLoading) && <tr><td colSpan={visibleFields.length} className="text-center p-4"><div className="flex items-center justify-center"><div className="spinner mr-2"></div>Fetching purchase data...</div></td></tr>}
-                                    {!isPurchaseDataLoading && filteredAndSortedCustomers.length === 0 && <tr><td colSpan={visibleFields.length} className="text-center p-4 text-gray-500">No customers match the current filters.</td></tr>}
-                                    {!isPurchaseDataLoading && filteredAndSortedCustomers.map(customer => (
+                                    {isFetchingData && <tr><td colSpan={visibleFields.length} className="text-center p-4"><div className="flex items-center justify-center"><div className="spinner mr-2"></div>Fetching purchase data...</div></td></tr>}
+                                    {!isFetchingData && filteredAndSortedCustomers.length === 0 && <tr><td colSpan={visibleFields.length} className="text-center p-4 text-gray-500">No customers match the current filters.</td></tr>}
+                                    {!isFetchingData && filteredAndSortedCustomers.map(customer => (
                                         <tr key={customer.id} className="bg-white border-b hover:bg-gray-50">
                                             {visibleFields.map(field => {
                                                 let cellContent = 'N/A';
