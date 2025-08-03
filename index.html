@@ -491,7 +491,7 @@
                     return Object.entries(widget.filters || {}).every(([key, filterConfig]) => {
                         if (!filterConfig || !filterConfig.values || filterConfig.values.size === 0) return true;
                         
-                        const col = widget.columns.find(c => c.key === key);
+                        const col = widget.fields.find(c => c.key === key);
                         if (!col) return true; 
 
                         let customerValue;
