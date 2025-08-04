@@ -66,6 +66,8 @@
             return path.reduce((acc, part) => acc && acc[part], obj);
         }
         
+        const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
         // --- Main App Component ---
         function App() {
             const [user, setUser] = useState(null);
@@ -79,6 +81,7 @@
             const [allCustomers, setAllCustomers] = useState([]);
             const [groupsMap, setGroupsMap] = useState(new Map());
             const [segmentsMap, setSegmentsMap] = useState(new Map());
+            const [customAttrDefs, setCustomAttrDefs] = useState(new Map());
             const [locationId, setLocationId] = useState(null);
             const [personalReports, setPersonalReports] = useState([]);
             const [publicReports, setPublicReports] = useState([]);
@@ -118,7 +121,7 @@
                         return reports.map(report => ({
                             ...report,
                             filters: Object.entries(report.filters || {}).reduce((acc, [key, val]) => {
-                                acc[key] = { ...val, values: new Set(val.values || []) };
+                                acc[key] = { ...val, values: new Set(val.values || []), excludedValues: new Set(val.excludedValues || []) };
                                 return acc;
                             }, {}),
                         }));
@@ -147,21 +150,58 @@
                 }
             }, [user]);
 
+            const fetchAllCustomers = useCallback(async () => {
+                setLoadingMessage('Fetching all customers...');
+                let fetchedCustomers = [];
+                let cursor = undefined;
+                do {
+                    const data = await apiFetch('/v2/customers/search', {
+                        method: 'POST',
+                        body: JSON.stringify({ query: { sort: { field: "CREATED_AT", order: "DESC" } }, cursor: cursor })
+                    });
+                    if (data.customers) fetchedCustomers.push(...data.customers);
+                    cursor = data.cursor;
+                    if (cursor) await delay(200); // Throttle requests
+                } while (cursor);
+                
+                const uniqueCustomers = Array.from(new Map(fetchedCustomers.map(customer => [customer.id, customer])).values());
+
+                uniqueCustomers.sort((a, b) => (a.given_name || '').localeCompare(b.given_name || ''));
+                setAllCustomers(uniqueCustomers);
+            }, [squareAccessToken]);
+
             useEffect(() => {
                 if (squareAccessToken) {
+                    const fetchAllCustomAttributeDefinitions = async () => {
+                        let definitions = [];
+                        let cursor = undefined;
+                        do {
+                            const endpoint = cursor ? `/v2/customers/custom-attribute-definitions?cursor=${cursor}` : '/v2/customers/custom-attribute-definitions';
+                            const data = await apiFetch(endpoint);
+                            if (data.custom_attribute_definitions) {
+                                definitions.push(...data.custom_attribute_definitions);
+                            }
+                            cursor = data.cursor;
+                            if (cursor) await delay(200); // Throttle requests
+                        } while (cursor);
+                        return definitions;
+                    };
+
                     const fetchInitialData = async () => {
                         setIsLoading(true);
                         setLoadingMessage('Fetching initial data...');
                         setError('');
                         try {
-                            const [groupsData, segmentsData, locationData] = await Promise.all([
+                            const [groupsData, segmentsData, locationData, customAttrData] = await Promise.all([
                                 apiFetch('/v2/customers/groups'),
                                 apiFetch('/v2/customers/segments'),
                                 apiFetch('/v2/locations'),
+                                fetchAllCustomAttributeDefinitions(),
                             ]);
 
                             if (groupsData.groups) setGroupsMap(new Map(groupsData.groups.map(g => [g.id, g.name])));
                             if (segmentsData.segments) setSegmentsMap(new Map(segmentsData.segments.map(s => [s.id, s.name])));
+                            setCustomAttrDefs(new Map(customAttrData.map(def => [def.key, def])));
                             
                             const activeLocation = locationData.locations?.find(loc => loc.status === 'ACTIVE');
                             if (activeLocation) {
@@ -188,27 +228,29 @@
                         }
                     };
                     
-                    const fetchAllCustomers = async () => {
-                        setLoadingMessage('Fetching all customers...');
-                        let fetchedCustomers = [];
-                        let cursor = undefined;
-                        do {
-                            const data = await apiFetch('/v2/customers/search', {
-                                method: 'POST',
-                                body: JSON.stringify({ query: { sort: { field: "CREATED_AT", order: "DESC" } }, cursor: cursor })
-                            });
-                            if (data.customers) fetchedCustomers.push(...data.customers);
-                            cursor = data.cursor;
-                        } while (cursor);
-                        
-                        fetchedCustomers.sort((a, b) => (a.given_name || '').localeCompare(b.given_name || ''));
-                        setAllCustomers(fetchedCustomers);
-                    };
-
                     fetchInitialData();
                 }
-            }, [squareAccessToken, user]);
+            }, [squareAccessToken, user, fetchAllCustomers]);
             
+            const handleUpdateCustomer = async (customerId, version, updatePayload) => {
+                try {
+                    const { customer: updatedCustomerFromServer } = await apiFetch(`/v2/customers/${customerId}`, {
+                        method: 'PUT',
+                        body: JSON.stringify({ version, ...updatePayload }),
+                    });
+
+                    setAllCustomers(prevCustomers => 
+                        prevCustomers.map(c => c.id === customerId ? updatedCustomerFromServer : c)
+                    );
+
+                    setCustomerDetails(updatedCustomerFromServer);
+
+                } catch (err) {
+                    console.error("Failed to update customer:", err);
+                    setError("Could not update customer profile. The data may be out of sync. Please refresh the page.");
+                }
+            };
+
             const handleSelectCustomer = (customer) => {
                 setIsLoading(true);
                 setSelectedCustomer(customer);
@@ -263,7 +305,8 @@
                         const filterConfig = report.filters[key];
                         serializedFilters[key] = {
                             ...filterConfig,
-                            values: Array.from(filterConfig.values || [])
+                            values: Array.from(filterConfig.values || []),
+                            excludedValues: Array.from(filterConfig.excludedValues || [])
                         };
                     }
                 }
@@ -365,9 +408,9 @@
 
                 switch(currentView) {
                     case 'profile':
-                        return customerDetails ? <CustomerProfile customer={customerDetails} groupsMap={groupsMap} segmentsMap={segmentsMap} onBack={() => setCurrentView('directory')} /> : <div className="flex justify-center items-center h-full"><div className="spinner"></div></div>;
+                        return customerDetails ? <CustomerProfile customer={customerDetails} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} onBack={() => setCurrentView('directory')} onUpdateCustomer={handleUpdateCustomer} /> : <div className="flex justify-center items-center h-full"><div className="spinner"></div></div>;
                     case 'reports':
-                        return <ReportsPage allCustomers={allCustomers} groupsMap={groupsMap} segmentsMap={segmentsMap} onSelectCustomer={handleSelectCustomer} onBack={() => setCurrentView('dashboard')} savedReports={combinedReports} onSaveReport={handleSaveReport} onRenameReport={handleRenameReport} onDeleteReport={handleDeleteReport} initialReport={reportToLoad} onInitialReportLoaded={() => setReportToLoad(null)} />;
+                        return <ReportsPage allCustomers={allCustomers} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} onSelectCustomer={handleSelectCustomer} onBack={() => setCurrentView('dashboard')} savedReports={combinedReports} onSaveReport={handleSaveReport} onRenameReport={handleRenameReport} onDeleteReport={handleDeleteReport} initialReport={reportToLoad} onInitialReportLoaded={() => setReportToLoad(null)} />;
                     case 'directory':
                         return <DirectoryPage allCustomers={allCustomers} onSelectCustomer={handleSelectCustomer} onBack={() => setCurrentView('dashboard')} />;
                     case 'dashboard':
@@ -496,8 +539,12 @@
 
                         let customerValue;
                         if (col.key === 'groups') {
-                             const customerGroups = new Set([...(customer.group_ids || []).map(id => groupsMap.get(id)), ...(customer.segment_ids || []).map(id => segmentsMap.get(id))].filter(Boolean));
-                             return Array.from(filterConfig.values).some(v => customerGroups.has(v));
+                            const customerGroups = new Set([...(customer.group_ids || []).map(id => groupsMap.get(id)), ...(customer.segment_ids || []).map(id => segmentsMap.get(id))].filter(Boolean));
+                            if (filterConfig.mode === 'all') {
+                                return Array.from(filterConfig.values).every(v => customerGroups.has(v));
+                            } else {
+                                return Array.from(filterConfig.values).some(v => customerGroups.has(v));
+                            }
                         } else {
                             customerValue = (getNestedValue(customer, col.path) || 'N/A').toString();
                         }
@@ -565,9 +612,9 @@
             );
         }
 
-        function ReportsPage({ allCustomers, groupsMap, segmentsMap, onSelectCustomer, onBack, savedReports, onSaveReport, onRenameReport, onDeleteReport, initialReport, onInitialReportLoaded }) {
+        function ReportsPage({ allCustomers, groupsMap, segmentsMap, customAttrDefs, onSelectCustomer, onBack, savedReports, onSaveReport, onRenameReport, onDeleteReport, initialReport, onInitialReportLoaded }) {
             const getInitialFields = useCallback(() => {
-                return [
+                const standardFields = [
                     { key: 'given_name', label: 'First Name', visible: true, path: ['given_name'] },
                     { key: 'family_name', label: 'Last Name', visible: true, path: ['family_name'] },
                     { key: 'email_address', label: 'Email', visible: true, path: ['email_address'] },
@@ -575,7 +622,11 @@
                     { key: 'created_at', label: 'Customer Since', visible: true, path: ['created_at'] },
                     { key: 'groups', label: 'Groups & Segments', visible: true, path: [] },
                 ];
-            }, []);
+                const customFields = Array.from(customAttrDefs.values()).map(def => ({
+                    key: def.key, label: def.name, visible: false, isCustom: true, path: ['custom_attributes', def.key, 'value']
+                }));
+                return [...standardFields, ...customFields];
+            }, [customAttrDefs]);
 
             const [fields, setFields] = useState(getInitialFields);
             const [fieldFilters, setFieldFilters] = useState({});
@@ -596,19 +647,37 @@
                         const field = fields.find(c => c.key === key);
                         if (!field) return true;
 
-                        if (filterConfig.values && filterConfig.values.size > 0) {
-                            let customerValue;
-                             if (field.key === 'groups') {
-                                const groupNames = (customer.group_ids || []).map(id => groupsMap.get(id) || '');
-                                const segmentNames = (customer.segment_ids || []).map(id => segmentsMap.get(id) || '');
-                                const customerGroups = new Set([...groupNames, ...segmentNames].filter(Boolean));
-                                return Array.from(filterConfig.values).some(v => customerGroups.has(v));
-                            } else {
-                                customerValue = getNestedValue(customer, field.path);
-                                if (field.path.includes('created_at')) customerValue = formatSimpleDate(customerValue);
-                                customerValue = (customerValue || 'N/A').toString();
+                        if (field.key === 'groups') {
+                            const groupNames = (customer.group_ids || []).map(id => groupsMap.get(id));
+                            const segmentNames = (customer.segment_ids || []).map(id => segmentsMap.get(id));
+                            const customerGroups = new Set([...groupNames, ...segmentNames].filter(Boolean));
+
+                            const included = filterConfig.values && filterConfig.values.size > 0;
+                            const excluded = filterConfig.excludedValues && filterConfig.excludedValues.size > 0;
+
+                            if (!included && !excluded) return true;
+
+                            let matchesIncluded = !included;
+                            if (included) {
+                                if (filterConfig.mode === 'all') {
+                                    matchesIncluded = Array.from(filterConfig.values).every(v => customerGroups.has(v));
+                                } else {
+                                    matchesIncluded = Array.from(filterConfig.values).some(v => customerGroups.has(v));
+                                }
                             }
-                            if (!filterConfig.values.has(customerValue)) return false;
+
+                            let matchesExcluded = false;
+                            if (excluded) {
+                                matchesExcluded = Array.from(filterConfig.excludedValues).some(v => customerGroups.has(v));
+                            }
+                            
+                            return matchesIncluded && !matchesExcluded;
+
+                        } else if (filterConfig.values && filterConfig.values.size > 0) {
+                            let customerValue = getNestedValue(customer, field.path);
+                            if (field.path.includes('created_at')) customerValue = formatSimpleDate(customerValue);
+                            customerValue = (customerValue || 'N/A').toString();
+                            return filterConfig.values.has(customerValue);
                         }
                         
                         return true;
@@ -754,20 +823,21 @@
             
             const [uniqueValues] = useState(getFieldValues);
             const [checkedValues, setCheckedValues] = useState(filters[field.key]?.values || new Set());
+            const [excludedValues, setExcludedValues] = useState(filters[field.key]?.excludedValues || new Set());
             const [searchTerm, setSearchTerm] = useState('');
+            const [matchMode, setMatchMode] = useState(filters[field.key]?.mode || 'any');
 
-            const handleCheck = (value) => {
-                const newChecked = new Set(checkedValues);
+            const handleCheck = (value, isExcluded) => {
+                const currentSet = isExcluded ? excludedValues : checkedValues;
+                const setter = isExcluded ? setExcludedValues : setCheckedValues;
+                const newChecked = new Set(currentSet);
                 if (newChecked.has(value)) newChecked.delete(value);
                 else newChecked.add(value);
-                setCheckedValues(newChecked);
+                setter(newChecked);
             };
 
-            const handleSelectAll = () => setCheckedValues(new Set(filteredUniqueValues));
-            const handleClear = () => setCheckedValues(new Set());
-
             const handleApply = () => {
-                setFilters(prev => ({ ...prev, [field.key]: { values: checkedValues } }));
+                setFilters(prev => ({ ...prev, [field.key]: { values: checkedValues, excludedValues: excludedValues, mode: matchMode } }));
                 onClose();
             };
             
@@ -785,26 +855,53 @@
 
             return (
                 <div className="fixed inset-0 bg-black bg-opacity-25 flex items-center justify-center z-30" onClick={onClose}>
-                    <div className="bg-white rounded-lg shadow-xl p-4 w-full max-w-sm" onClick={e => e.stopPropagation()}>
+                    <div className="bg-white rounded-lg shadow-xl p-4 w-full max-w-md" onClick={e => e.stopPropagation()}>
                         <div className="flex justify-between items-center">
                             <h3 className="font-bold text-lg">Filter by {field.label}</h3>
                             <button onClick={onClose} className="text-gray-400 hover:text-gray-600">&times;</button>
                         </div>
                         
-                        <div className="mt-4 border-t pt-4">
-                            <h4 className="text-sm font-semibold mb-2">Filter by values</h4>
-                            <div className="my-2 flex space-x-2">
-                                <button onClick={handleSelectAll} className="text-sm text-cyan-600 hover:underline">Select all visible</button>
-                                <button onClick={handleClear} className="text-sm text-cyan-600 hover:underline">Clear</button>
-                            </div>
-                            <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Search values..." className="w-full px-2 py-1 border rounded-md text-sm mb-2"/>
-                            <div className="max-h-40 overflow-y-auto border rounded-md p-2 space-y-1">
-                                {filteredUniqueValues.map(value => (
-                                    <label key={value} className="flex items-center text-sm hover:bg-gray-50 rounded p-1">
-                                        <input type="checkbox" checked={checkedValues.has(value)} onChange={() => handleCheck(value)} className="mr-2 h-4 w-4 text-cyan-600 border-gray-300 rounded focus:ring-cyan-500"/>
-                                        <span className="truncate">{value}</span>
+                        {field.key === 'groups' && (
+                            <div className="mt-4 border-b pb-4">
+                                <h4 className="text-sm font-semibold mb-2">Match Type</h4>
+                                <div className="flex space-x-4">
+                                    <label className="flex items-center text-sm">
+                                        <input type="radio" name="match-mode" value="any" checked={matchMode === 'any'} onChange={(e) => setMatchMode(e.target.value)} className="mr-1"/>
+                                        Match Any (OR)
                                     </label>
-                                ))}
+                                    <label className="flex items-center text-sm">
+                                        <input type="radio" name="match-mode" value="all" checked={matchMode === 'all'} onChange={(e) => setMatchMode(e.target.value)} className="mr-1"/>
+                                        Match All (AND)
+                                    </label>
+                                </div>
+                            </div>
+                        )}
+
+                        <div className="mt-4">
+                            <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Search values..." className="w-full px-2 py-1 border rounded-md text-sm mb-2"/>
+                            <div className="grid grid-cols-2 gap-4">
+                                <div>
+                                    <h4 className="text-sm font-semibold mb-2">Match These</h4>
+                                    <div className="max-h-40 overflow-y-auto border rounded-md p-2 space-y-1">
+                                        {filteredUniqueValues.map(value => (
+                                            <label key={`include-${value}`} className="flex items-center text-sm hover:bg-gray-50 rounded p-1">
+                                                <input type="checkbox" checked={checkedValues.has(value)} onChange={() => handleCheck(value, false)} className="mr-2 h-4 w-4 text-cyan-600 border-gray-300 rounded focus:ring-cyan-500"/>
+                                                <span className="truncate">{value}</span>
+                                            </label>
+                                        ))}
+                                    </div>
+                                </div>
+                                <div>
+                                    <h4 className="text-sm font-semibold mb-2">Do Not Match (NOT)</h4>
+                                    <div className="max-h-40 overflow-y-auto border rounded-md p-2 space-y-1">
+                                        {filteredUniqueValues.map(value => (
+                                            <label key={`exclude-${value}`} className="flex items-center text-sm hover:bg-gray-50 rounded p-1">
+                                                <input type="checkbox" checked={excludedValues.has(value)} onChange={() => handleCheck(value, true)} className="mr-2 h-4 w-4 text-red-600 border-gray-300 rounded focus:ring-red-500"/>
+                                                <span className="truncate">{value}</span>
+                                            </label>
+                                        ))}
+                                    </div>
+                                </div>
                             </div>
                         </div>
 
@@ -963,13 +1060,28 @@
             );
         }
 
-        function CustomerProfile({ customer, groupsMap, segmentsMap, onBack }) {
+        function CustomerProfile({ customer, groupsMap, segmentsMap, onBack, onUpdateCustomer, customAttrDefs }) {
+            const smsAttrKey = "square:3b8c48fb-dead-437e-b974-430466925699";
             
+            const handleLogSms = () => {
+                const today = new Date().toISOString().split('T')[0];
+                const payload = {
+                    custom_attributes: {
+                        [smsAttrKey]: {
+                            value: today
+                        }
+                    }
+                };
+                onUpdateCustomer(customer.id, customer.version, payload);
+            };
+
             const formatAddress = (address) => {
                 if (!address) return 'N/A';
                 const parts = [ address.address_line_1, address.address_line_2, `${address.locality || ''} ${address.administrative_district_level_1 || ''} ${address.postal_code || ''}`.trim(), address.country ];
                 return parts.filter(Boolean).join(', ');
             };
+
+            const lastSmsContact = getNestedValue(customer, ['custom_attributes', smsAttrKey, 'value']);
 
             return (
                 <div className="p-8">
@@ -988,7 +1100,8 @@
                             </InfoCard>
                             <InfoCard title="Stats">
                                 <InfoItem label="Last Visit" value={customer.last_visit ? formatDetailedDate(customer.last_visit) : 'No visits found'} />
-                                <InfoItem label="Source" value={customer.creation_source} />
+                                <InfoItem label="Last SMS Contact" value={lastSmsContact ? formatSimpleDate(lastSmsContact) : 'N/A'} />
+                                <button onClick={handleLogSms} className="mt-2 w-full px-4 py-2 bg-cyan-600 text-white rounded-md shadow-sm hover:bg-cyan-700">Log SMS Sent Today</button>
                             </InfoCard>
                             <InfoCard title="Details">
                                 <InfoItem label="Birthday" value={customer.birthday ? formatSimpleDate(customer.birthday) : 'N/A'} />
