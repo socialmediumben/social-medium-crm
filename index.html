@@ -232,25 +232,48 @@
                 }
             }, [squareAccessToken, user, fetchAllCustomers]);
             
-            const handleUpdateCustomer = async (customerId, version, updatePayload) => {
+            const handleUpdateCustomAttribute = async (customerId, attributeKey, value) => {
                 try {
-                    const { customer: updatedCustomerFromServer } = await apiFetch(`/v2/customers/${customerId}`, {
-                        method: 'PUT',
-                        body: JSON.stringify({ version, ...updatePayload }),
+                    const payload = {
+                        custom_attribute: { value }
+                    };
+                    
+                    const { custom_attribute } = await apiFetch(`/v2/customers/${customerId}/custom-attributes/${attributeKey}`, {
+                        method: 'POST',
+                        body: JSON.stringify(payload),
                     });
 
                     setAllCustomers(prevCustomers => 
-                        prevCustomers.map(c => c.id === customerId ? updatedCustomerFromServer : c)
+                        prevCustomers.map(c => {
+                            if (c.id === customerId) {
+                                return {
+                                    ...c,
+                                    custom_attributes: {
+                                        ...c.custom_attributes,
+                                        [attributeKey]: custom_attribute
+                                    },
+                                    version: custom_attribute.version
+                                };
+                            }
+                            return c;
+                        })
                     );
 
-                    setCustomerDetails(updatedCustomerFromServer);
+                    setCustomerDetails(prevDetails => ({ 
+                        ...prevDetails,
+                        custom_attributes: {
+                            ...prevDetails.custom_attributes,
+                            [attributeKey]: custom_attribute
+                        },
+                        version: custom_attribute.version
+                    }));
 
                 } catch (err) {
-                    console.error("Failed to update customer:", err);
-                    setError("Could not update customer profile. The data may be out of sync. Please refresh the page.");
+                    console.error("Failed to update custom attribute:", err);
+                    setError("Could not update custom attribute. Please try again.");
                 }
             };
-
+            
             const handleSelectCustomer = (customer) => {
                 setIsLoading(true);
                 setSelectedCustomer(customer);
@@ -408,7 +431,7 @@
 
                 switch(currentView) {
                     case 'profile':
-                        return customerDetails ? <CustomerProfile customer={customerDetails} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} onBack={() => setCurrentView('directory')} onUpdateCustomer={handleUpdateCustomer} /> : <div className="flex justify-center items-center h-full"><div className="spinner"></div></div>;
+                        return customerDetails ? <CustomerProfile customer={customerDetails} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} onBack={() => setCurrentView('directory')} onUpdateCustomAttribute={handleUpdateCustomAttribute} /> : <div className="flex justify-center items-center h-full"><div className="spinner"></div></div>;
                     case 'reports':
                         return <ReportsPage allCustomers={allCustomers} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} onSelectCustomer={handleSelectCustomer} onBack={() => setCurrentView('dashboard')} savedReports={combinedReports} onSaveReport={handleSaveReport} onRenameReport={handleRenameReport} onDeleteReport={handleDeleteReport} initialReport={reportToLoad} onInitialReportLoaded={() => setReportToLoad(null)} />;
                     case 'directory':
@@ -1060,19 +1083,12 @@
             );
         }
 
-        function CustomerProfile({ customer, groupsMap, segmentsMap, onBack, onUpdateCustomer, customAttrDefs }) {
+        function CustomerProfile({ customer, groupsMap, segmentsMap, onBack, onUpdateCustomAttribute, customAttrDefs }) {
             const smsAttrKey = "square:3b8c48fb-dead-437e-b974-430466925699";
             
             const handleLogSms = () => {
                 const today = new Date().toISOString().split('T')[0];
-                const payload = {
-                    custom_attributes: {
-                        [smsAttrKey]: {
-                            value: today
-                        }
-                    }
-                };
-                onUpdateCustomer(customer.id, customer.version, payload);
+                onUpdateCustomAttribute(customer.id, smsAttrKey, today);
             };
 
             const formatAddress = (address) => {
