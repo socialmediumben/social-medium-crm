@@ -691,7 +691,7 @@
                         if (currentPercentage > widget.targetMax) {
                             return `+${(currentPercentage - widget.targetMax).toFixed(1)}%`;
                         }
-                        return null; // In range
+                        return 0; // In range
                     } else {
                         if (count < widget.targetMin) {
                             return count - widget.targetMin;
@@ -699,7 +699,7 @@
                         if (count > widget.targetMax) {
                             return `+${count - widget.targetMax}`;
                         }
-                        return null; // In range
+                        return 0; // In range
                     }
                 }
                 return null;
@@ -718,7 +718,9 @@
                         {targetDifference !== null && (
                             <div className={`flex items-center text-lg font-semibold ${textColor}`}>
                                 <span>🎯</span>
-                                <span className="ml-1">{targetDifference}</span>
+                                {targetDifference !== 0 && (
+                                    <span className="ml-1">{targetDifference}</span>
+                                )}
                             </div>
                         )}
                     </div>
