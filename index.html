@@ -38,7 +38,7 @@
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     </style>
 </head>
-<body class="bg-gray-100">
+<body>
 
     <div id="root"></div>
 
@@ -95,6 +95,7 @@
             const API_PROXY_URL = 'https://square-checkin-backend.onrender.com';
 
             useEffect(() => {
+                console.log(`[THEME] Applying theme: ${theme}`);
                 if (theme === 'dark') {
                     document.documentElement.classList.add('dark');
                     document.body.classList.add('bg-gray-900');
@@ -108,7 +109,11 @@
             }, [theme]);
 
             const toggleTheme = () => {
-                setTheme(prevTheme => prevTheme === 'light' ? 'dark' : 'light');
+                setTheme(prevTheme => {
+                    const newTheme = prevTheme === 'light' ? 'dark' : 'light';
+                    console.log(`[THEME] Toggling theme from ${prevTheme} to ${newTheme}`);
+                    return newTheme;
+                });
             };
 
             const apiFetch = async (endpoint, options = {}) => {
@@ -472,7 +477,7 @@
             return (
                 <div className="h-screen flex flex-col">
                     <Toolbar onNavigate={handleNavigate} theme={theme} toggleTheme={toggleTheme} />
-                    <main className="flex-1 overflow-y-auto bg-gray-50 dark:bg-gray-800">
+                    <main className="flex-1 overflow-y-auto">
                         {renderMainContent()}
                     </main>
                 </div>
