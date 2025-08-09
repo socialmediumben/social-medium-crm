@@ -290,7 +290,7 @@
                     }
 
                     try {
-                        const [customerData, ordersData] = await Promise.all([
+                        const [customerData, ordersData, customAttributesData] = await Promise.all([
                             apiFetch(`/v2/customers/${customer.id}`),
                             apiFetch('/v2/orders/search', {
                                 method: 'POST',
@@ -305,10 +305,20 @@
                                     },
                                     limit: 1
                                 })
-                            })
+                            }),
+                            apiFetch(`/v2/customers/${customer.id}/custom-attributes`)
                         ]);
                         
-                        setCustomerDetails({ ...customerData.customer, last_visit: ordersData.orders?.[0]?.closed_at });
+                        const fullCustomerProfile = { 
+                            ...customerData.customer, 
+                            last_visit: ordersData.orders?.[0]?.closed_at,
+                            custom_attributes: (customAttributesData.custom_attributes || []).reduce((acc, attr) => {
+                                acc[attr.key] = attr;
+                                return acc;
+                            }, {})
+                        };
+
+                        setCustomerDetails(fullCustomerProfile);
 
                     } catch (err) {
                         setError(err.message);
@@ -555,24 +565,45 @@
                 let customers = [...allCustomers];
                 return customers.filter(customer => {
                     return Object.entries(widget.filters || {}).every(([key, filterConfig]) => {
-                        if (!filterConfig || !filterConfig.values || filterConfig.values.size === 0) return true;
+                        if (!filterConfig) return true;
                         
-                        const col = widget.fields.find(c => c.key === key);
-                        if (!col) return true; 
+                        const field = widget.fields.find(c => c.key === key);
+                        if (!field) return true;
 
-                        let customerValue;
-                        if (col.key === 'groups') {
-                            const customerGroups = new Set([...(customer.group_ids || []).map(id => groupsMap.get(id)), ...(customer.segment_ids || []).map(id => segmentsMap.get(id))].filter(Boolean));
-                            if (filterConfig.mode === 'all') {
-                                return Array.from(filterConfig.values).every(v => customerGroups.has(v));
-                            } else {
-                                return Array.from(filterConfig.values).some(v => customerGroups.has(v));
+                        if (field.key === 'groups') {
+                            const groupNames = (customer.group_ids || []).map(id => groupsMap.get(id));
+                            const segmentNames = (customer.segment_ids || []).map(id => segmentsMap.get(id));
+                            const customerGroups = new Set([...groupNames, ...segmentNames].filter(Boolean));
+
+                            const included = filterConfig.values && filterConfig.values.size > 0;
+                            const excluded = filterConfig.excludedValues && filterConfig.excludedValues.size > 0;
+
+                            if (!included && !excluded) return true;
+
+                            let matchesIncluded = !included;
+                            if (included) {
+                                if (filterConfig.mode === 'all') {
+                                    matchesIncluded = Array.from(filterConfig.values).every(v => customerGroups.has(v));
+                                } else {
+                                    matchesIncluded = Array.from(filterConfig.values).some(v => customerGroups.has(v));
+                                }
                             }
-                        } else {
-                            customerValue = (getNestedValue(customer, col.path) || 'N/A').toString();
+
+                            let matchesExcluded = false;
+                            if (excluded) {
+                                matchesExcluded = Array.from(filterConfig.excludedValues).some(v => customerGroups.has(v));
+                            }
+                            
+                            return matchesIncluded && !matchesExcluded;
+
+                        } else if (filterConfig.values && filterConfig.values.size > 0) {
+                            let customerValue = getNestedValue(customer, field.path);
+                            if (field.path.includes('created_at')) customerValue = formatSimpleDate(customerValue);
+                            customerValue = (customerValue || 'N/A').toString();
+                            return filterConfig.values.has(customerValue);
                         }
                         
-                        return filterConfig.values.has(customerValue);
+                        return true;
                     });
                 });
             }, [widget, allCustomers, groupsMap, segmentsMap]);
@@ -1099,6 +1130,28 @@
 
             const lastSmsContact = getNestedValue(customer, ['custom_attributes', smsAttrKey, 'value']);
 
+            // Organize custom attributes for display
+            const booleanAttributes = { true: [], false: [] };
+            const otherAttributes = [];
+
+            Array.from(customAttrDefs.values()).forEach(def => {
+                if (def.key === smsAttrKey) return; // Already handled in Stats
+                
+                const attr = customer.custom_attributes?.[def.key];
+                
+                if (def.schema.$ref.includes('Boolean')) {
+                    if (attr && attr.value === true) {
+                        booleanAttributes.true.push(def.name);
+                    } else {
+                        booleanAttributes.false.push(def.name);
+                    }
+                } else {
+                    if (attr) {
+                        otherAttributes.push({ label: def.name, value: attr.value });
+                    }
+                }
+            });
+
             return (
                 <div className="p-8">
                     <button onClick={onBack} className="mb-6 text-cyan-600 hover:text-cyan-800"> &larr; Back</button>
@@ -1130,6 +1183,29 @@
                                     {(customer.segment_ids || []).map(id => <Pill key={id} text={segmentsMap.get(id) || id} color="bg-green-100 text-green-800" />)}
                                 </div>
                             </InfoCard>
+                            
+                            <InfoCard title="Custom Fields" className="md:col-span-3">
+                                <div className="grid grid-cols-2 gap-x-8">
+                                    <div>
+                                        <h4 className="font-semibold text-gray-600 border-b pb-1 mb-2">True</h4>
+                                        <ul className="space-y-1">
+                                            {booleanAttributes.true.length > 0 ? booleanAttributes.true.map(name => <li key={name}>{name}</li>) : <li className="text-gray-400">None</li>}
+                                        </ul>
+                                    </div>
+                                    <div>
+                                        <h4 className="font-semibold text-gray-600 border-b pb-1 mb-2">False</h4>
+                                        <ul className="space-y-1">
+                                            {booleanAttributes.false.length > 0 ? booleanAttributes.false.map(name => <li key={name}>{name}</li>) : <li className="text-gray-400">None</li>}
+                                        </ul>
+                                    </div>
+                                </div>
+                                {otherAttributes.length > 0 && (
+                                    <div className="mt-4 pt-4 border-t">
+                                        {otherAttributes.map(attr => <InfoItem key={attr.label} label={attr.label} value={attr.value} />)}
+                                    </div>
+                                )}
+                            </InfoCard>
+
                             <InfoCard title="Notes" className="md:col-span-3">
                                 <p className="text-gray-700 whitespace-pre-wrap">{customer.note || 'No notes for this customer.'}</p>
                             </InfoCard>
