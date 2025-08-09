@@ -95,25 +95,16 @@
             const API_PROXY_URL = 'https://square-checkin-backend.onrender.com';
 
             useEffect(() => {
-                console.log(`[THEME] Applying theme: ${theme}`);
                 if (theme === 'dark') {
                     document.documentElement.classList.add('dark');
-                    document.body.classList.add('bg-gray-900');
-                    document.body.classList.remove('bg-gray-100');
                 } else {
                     document.documentElement.classList.remove('dark');
-                    document.body.classList.add('bg-gray-100');
-                    document.body.classList.remove('bg-gray-900');
                 }
                 localStorage.setItem('theme', theme);
             }, [theme]);
 
             const toggleTheme = () => {
-                setTheme(prevTheme => {
-                    const newTheme = prevTheme === 'light' ? 'dark' : 'light';
-                    console.log(`[THEME] Toggling theme from ${prevTheme} to ${newTheme}`);
-                    return newTheme;
-                });
+                setTheme(prevTheme => prevTheme === 'light' ? 'dark' : 'light');
             };
 
             const apiFetch = async (endpoint, options = {}) => {
@@ -396,15 +387,24 @@
                 }
             };
             
-            const handleRenameReport = async (reportId, newName, isPersonal) => {
-                const updateLogic = (reports) => reports.map(r => r.id === reportId ? { ...r, name: newName } : r);
-                
-                if (isPersonal) {
-                    const updatedReports = updateLogic(personalReports);
-                    await db.collection('users').doc(user.uid).update({ savedReports: updatedReports.map(serializeReport) });
+            const handleUpdateReport = async (updatedReport) => {
+                const serializedReport = serializeReport(updatedReport);
+                if (updatedReport.isPersonal) {
+                    const userDocRef = db.collection('users').doc(user.uid);
+                    const updatedPersonalReports = personalReports.map(r => 
+                        r.id === updatedReport.id ? updatedReport : r
+                    );
+                    await userDocRef.update({ 
+                        savedReports: updatedPersonalReports.map(serializeReport) 
+                    });
                 } else {
-                    const updatedReports = updateLogic(publicReports);
-                    await db.collection('public').doc('reports').set({ allReports: updatedReports.map(serializeReport) });
+                    const publicReportsDocRef = db.collection('public').doc('reports');
+                    const updatedPublicReports = publicReports.map(r => 
+                        r.id === updatedReport.id ? updatedReport : r
+                    );
+                    await publicReportsDocRef.set({ 
+                        allReports: updatedPublicReports.map(serializeReport) 
+                    });
                 }
             };
 
@@ -465,7 +465,7 @@
                     case 'profile':
                         return customerDetails ? <CustomerProfile customer={customerDetails} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} onBack={() => setCurrentView('directory')} onUpdateCustomAttribute={handleUpdateCustomAttribute} /> : <div className="flex justify-center items-center h-full"><div className="spinner"></div></div>;
                     case 'reports':
-                        return <ReportsPage allCustomers={allCustomers} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} onSelectCustomer={handleSelectCustomer} onBack={() => setCurrentView('dashboard')} savedReports={combinedReports} onSaveReport={handleSaveReport} onRenameReport={handleRenameReport} onDeleteReport={handleDeleteReport} initialReport={reportToLoad} onInitialReportLoaded={() => setReportToLoad(null)} totalCustomers={allCustomers.length} />;
+                        return <ReportsPage allCustomers={allCustomers} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} onSelectCustomer={handleSelectCustomer} onBack={() => setCurrentView('dashboard')} savedReports={combinedReports} onSaveReport={handleSaveReport} onUpdateReport={handleUpdateReport} onDeleteReport={handleDeleteReport} initialReport={reportToLoad} onInitialReportLoaded={() => setReportToLoad(null)} totalCustomers={allCustomers.length} />;
                     case 'directory':
                         return <DirectoryPage allCustomers={allCustomers} onSelectCustomer={handleSelectCustomer} onBack={() => setCurrentView('dashboard')} />;
                     case 'dashboard':
@@ -477,7 +477,7 @@
             return (
                 <div className="h-screen flex flex-col">
                     <Toolbar onNavigate={handleNavigate} theme={theme} toggleTheme={toggleTheme} />
-                    <main className="flex-1 overflow-y-auto">
+                    <main className="flex-1 overflow-y-auto bg-gray-100 dark:bg-gray-800">
                         {renderMainContent()}
                     </main>
                 </div>
@@ -637,13 +637,90 @@
             }, [widget, allCustomers, groupsMap, segmentsMap]);
 
             const percentage = totalCustomers > 0 ? (filteredCustomers.length / totalCustomers * 100).toFixed(1) : 0;
+            
+            let borderColor = 'border-transparent';
+            let textColor = 'text-cyan-600 dark:text-cyan-400';
+
+            if (widget.targetMin && widget.targetMax) {
+                const count = filteredCustomers.length;
+                let min = widget.targetMin;
+                let max = widget.targetMax;
+
+                if (widget.targetType === 'percentage') {
+                    min = Math.floor((widget.targetMin / 100) * totalCustomers);
+                    max = Math.floor((widget.targetMax / 100) * totalCustomers);
+                }
+
+                const below = count < min;
+                const above = count > max;
+
+                if (widget.reverseRange) {
+                    if (below) {
+                        borderColor = 'border-green-500';
+                        textColor = 'text-green-600 dark:text-green-400';
+                    } else if (above) {
+                        borderColor = 'border-red-500';
+                        textColor = 'text-red-600 dark:text-red-400';
+                    } else {
+                        borderColor = 'border-yellow-500';
+                        textColor = 'text-yellow-600 dark:text-yellow-400';
+                    }
+                } else {
+                     if (below) {
+                        borderColor = 'border-red-500';
+                        textColor = 'text-red-600 dark:text-red-400';
+                    } else if (above) {
+                        borderColor = 'border-green-500';
+                        textColor = 'text-green-600 dark:text-green-400';
+                    } else {
+                        borderColor = 'border-yellow-500';
+                        textColor = 'text-yellow-600 dark:text-yellow-400';
+                    }
+                }
+            }
+
+            const getTargetDifference = () => {
+                if (widget.targetMin && widget.targetMax) {
+                    const count = filteredCustomers.length;
+                    
+                    if (widget.targetType === 'percentage') {
+                        const currentPercentage = (count / totalCustomers) * 100;
+                        if (currentPercentage < widget.targetMin) {
+                            return `${(currentPercentage - widget.targetMin).toFixed(1)}%`;
+                        }
+                        if (currentPercentage > widget.targetMax) {
+                            return `+${(currentPercentage - widget.targetMax).toFixed(1)}%`;
+                        }
+                        return null; // In range
+                    } else {
+                        if (count < widget.targetMin) {
+                            return count - widget.targetMin;
+                        }
+                        if (count > widget.targetMax) {
+                            return `+${count - widget.targetMax}`;
+                        }
+                        return null; // In range
+                    }
+                }
+                return null;
+            };
+    
+            const targetDifference = getTargetDifference();
 
             return (
-                <button onClick={() => onWidgetClick(widget)} className="p-6 bg-white dark:bg-gray-800 rounded-lg shadow hover:bg-cyan-50 dark:hover:bg-gray-700 text-left transition flex flex-col justify-between">
+                <button onClick={() => onWidgetClick(widget)} className={`p-6 bg-white dark:bg-gray-800 rounded-lg shadow hover:bg-cyan-50 dark:hover:bg-gray-700 text-left transition flex flex-col justify-between border-4 ${borderColor}`}>
                     <h3 className="text-xl font-semibold text-gray-800 dark:text-gray-200">{widget.name}</h3>
-                    <div className="mt-4">
-                        <p className="text-5xl font-bold text-cyan-600 dark:text-cyan-400">{filteredCustomers.length}</p>
-                        <p className="text-gray-500 dark:text-gray-400">Customers ({percentage}%)</p>
+                    <div className="flex justify-between items-end mt-4">
+                        <div>
+                            <p className={`text-5xl font-bold ${textColor}`}>{filteredCustomers.length}</p>
+                            <p className="text-gray-500 dark:text-gray-400">Customers ({percentage}%)</p>
+                        </div>
+                        {targetDifference !== null && (
+                            <div className={`flex items-center text-lg font-semibold ${textColor}`}>
+                                <span>🎯</span>
+                                <span className="ml-1">{targetDifference}</span>
+                            </div>
+                        )}
                     </div>
                 </button>
             );
@@ -685,7 +762,7 @@
             );
         }
 
-        function ReportsPage({ allCustomers, groupsMap, segmentsMap, customAttrDefs, onSelectCustomer, onBack, savedReports, onSaveReport, onRenameReport, onDeleteReport, initialReport, onInitialReportLoaded, totalCustomers }) {
+        function ReportsPage({ allCustomers, groupsMap, segmentsMap, customAttrDefs, onSelectCustomer, onBack, savedReports, onSaveReport, onUpdateReport, onDeleteReport, initialReport, onInitialReportLoaded, totalCustomers }) {
             const getInitialFields = useCallback(() => {
                 const standardFields = [
                     { key: 'given_name', label: 'First Name', visible: true, path: ['given_name'] },
@@ -781,8 +858,19 @@
                 return customers;
             }, [allCustomers, fieldFilters, sortConfig, fields, groupsMap, segmentsMap]);
             
-            const handleModalSave = (name, isWidget, isShared) => {
-                const report = { name, filters: fieldFilters, sortConfig, fields, isWidget, isShared };
+            const handleModalSave = (name, isWidget, isShared, targetMin, targetMax, targetType, reverseRange) => {
+                const report = { 
+                    name, 
+                    filters: fieldFilters, 
+                    sortConfig, 
+                    fields, 
+                    isWidget, 
+                    isShared,
+                    targetMin: parseInt(targetMin, 10) || null,
+                    targetMax: parseInt(targetMax, 10) || null,
+                    targetType,
+                    reverseRange
+                };
                 onSaveReport(report, isWidget, isShared);
                 setIsSaveModalOpen(false);
             };
@@ -809,8 +897,8 @@
                         setFields={setFields}
                         savedReports={savedReports}
                         onLoadReport={handleLoadReport}
-                        onSaveReportClick={() => setIsSaveModalOpen(false)}
-                        onRenameReport={onRenameReport}
+                        onSaveReportClick={() => setIsSaveModalOpen(true)}
+                        onUpdateReport={onUpdateReport}
                         onDeleteReport={onDeleteReport}
                     />
                     <div className="flex-1 p-8 overflow-y-auto">
@@ -992,9 +1080,9 @@
             );
         }
         
-        function ReportsSidebar({ fields, setFields, savedReports, onLoadReport, onSaveReportClick, onRenameReport, onDeleteReport }) {
+        function ReportsSidebar({ fields, setFields, savedReports, onLoadReport, onSaveReportClick, onUpdateReport, onDeleteReport }) {
             const [openSections, setOpenSections] = useState({ reports: true, fields: true });
-            const [renameModal, setRenameModal] = useState(null);
+            const [reportToEdit, setReportToEdit] = useState(null);
             const [deleteModal, setDeleteModal] = useState(null);
             
             const toggleSection = (section) => setOpenSections(prev => ({...prev, [section]: !prev[section]}));
@@ -1003,9 +1091,19 @@
                 setFields(prev => prev.map(c => c.key === key ? { ...c, visible: !c.visible } : c));
             };
             
-            const handleRename = (newName) => {
-                if (newName && renameModal) { onRenameReport(renameModal.id, newName, renameModal.isPersonal); }
-                setRenameModal(null);
+            const handleSave = (name, isWidget, isShared, targetMin, targetMax, targetType, reverseRange) => {
+                const updatedReport = {
+                    ...reportToEdit,
+                    name: name.trim(),
+                    isWidget,
+                    isShared,
+                    targetMin: parseInt(targetMin, 10) || null,
+                    targetMax: parseInt(targetMax, 10) || null,
+                    targetType,
+                    reverseRange: isWidget ? reverseRange : false
+                };
+                onUpdateReport(updatedReport);
+                setReportToEdit(null);
             };
 
             const handleDelete = () => {
@@ -1018,7 +1116,7 @@
                 <div className="w-80 bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-700 flex flex-col p-4 space-y-2 overflow-y-auto">
                     <h2 className="text-xl font-bold dark:text-gray-200">Report Controls</h2>
                     <div className="space-y-2">
-                        <button onClick={onSaveReportClick} className="w-full px-4 py-2 bg-cyan-600 text-white rounded-md shadow-sm hover:bg-cyan-700">Save Report</button>
+                        <button onClick={onSaveReportClick} className="w-full px-4 py-2 bg-cyan-600 text-white rounded-md shadow-sm hover:bg-cyan-700">Save New Report</button>
                     </div>
                     
                     <SidebarSection title="Saved Reports" id="reports" isOpen={openSections.reports} onToggle={toggleSection}>
@@ -1030,7 +1128,7 @@
                                         <span className="text-gray-400 ml-1">{r.isPersonal ? '(Personal)' : '(Shared)'}</span>
                                     </button>
                                     <div className="hidden group-hover:flex items-center flex-shrink-0">
-                                        <button onClick={() => setRenameModal(r)} className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded text-xs">✏️</button>
+                                        <button onClick={() => setReportToEdit(r)} className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded text-xs">✏️</button>
                                         <button onClick={() => setDeleteModal(r)} className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded text-xs">🗑️</button>
                                     </div>
                                 </div>
@@ -1050,21 +1148,25 @@
                         </div>
                     </SidebarSection>
                 </div>
-                {renameModal && <RenameModal report={renameModal} onRename={handleRename} onCancel={() => setRenameModal(null)} />}
+                {reportToEdit && <SaveReportModal reportToEdit={reportToEdit} onSave={handleSave} onCancel={() => setReportToEdit(null)} />}
                 {deleteModal && <DeleteModal report={deleteModal} onDelete={handleDelete} onCancel={() => setDeleteModal(null)} />}
                 </>
             );
         }
 
-        function SaveReportModal({ onSave, onCancel }) {
-            const [name, setName] = useState('');
-            const [isShared, setIsShared] = useState(false);
-            const [isWidget, setIsWidget] = useState(false);
+        function SaveReportModal({ onSave, onCancel, reportToEdit }) {
+            const [name, setName] = useState(reportToEdit?.name || '');
+            const [isShared, setIsShared] = useState(reportToEdit?.isShared || false);
+            const [isWidget, setIsWidget] = useState(reportToEdit?.isWidget || false);
+            const [targetMin, setTargetMin] = useState(reportToEdit?.targetMin || '');
+            const [targetMax, setTargetMax] = useState(reportToEdit?.targetMax || '');
+            const [targetType, setTargetType] = useState(reportToEdit?.targetType || 'count');
+            const [reverseRange, setReverseRange] = useState(reportToEdit?.reverseRange || false);
 
             return (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-40">
                     <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-sm">
-                        <h3 className="font-bold text-lg dark:text-gray-200">Save Report</h3>
+                        <h3 className="font-bold text-lg dark:text-gray-200">{reportToEdit?.id ? 'Edit Report' : 'Save Report'}</h3>
                         <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">Enter a name for this report configuration.</p>
                         <input 
                             type="text" 
@@ -1073,6 +1175,43 @@
                             className="w-full mt-4 px-3 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white" 
                             placeholder="Report Name" 
                         />
+                         {isWidget && (
+                            <div className="mt-4">
+                                <div className="flex items-center justify-between mb-2">
+                                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Target Range</label>
+                                    <select value={targetType} onChange={e => setTargetType(e.target.value)} className="text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white rounded-md">
+                                        <option value="count">Count</option>
+                                        <option value="percentage">Percentage</option>
+                                    </select>
+                                </div>
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Min</label>
+                                        <input 
+                                            type="number" 
+                                            value={targetMin} 
+                                            onChange={(e) => setTargetMin(e.target.value)} 
+                                            className="w-full mt-1 px-3 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white" 
+                                            placeholder={targetType === 'count' ? "e.g., 65" : "e.g., 10"}
+                                        />
+                                    </div>
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Max</label>
+                                        <input 
+                                            type="number" 
+                                            value={targetMax} 
+                                            onChange={(e) => setTargetMax(e.target.value)} 
+                                            className="w-full mt-1 px-3 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white" 
+                                            placeholder={targetType === 'count' ? "e.g., 75" : "e.g., 15"}
+                                        />
+                                    </div>
+                                </div>
+                                <label className="flex items-center mt-2 text-sm dark:text-gray-300">
+                                    <input type="checkbox" checked={reverseRange} onChange={e => setReverseRange(e.target.checked)} className="mr-2"/>
+                                    Reverse Target Colors (Lower is better)
+                                </label>
+                            </div>
+                        )}
                         <label className="flex items-center mt-4 text-sm dark:text-gray-300">
                             <input type="checkbox" checked={isWidget} onChange={e => setIsWidget(e.target.checked)} className="mr-2"/>
                             Add as a Dashboard Widget
@@ -1083,37 +1222,7 @@
                         </label>
                         <div className="mt-6 flex justify-end space-x-2">
                             <button onClick={onCancel} className="px-4 py-2 bg-gray-200 dark:bg-gray-600 dark:text-white rounded-md">Cancel</button>
-                            <button onClick={() => name && onSave(name, isWidget, isShared)} className="px-4 py-2 bg-cyan-600 text-white rounded-md">Save</button>
-                        </div>
-                    </div>
-                </div>
-            );
-        }
-
-        function RenameModal({ report, onRename, onCancel }) {
-            const [newName, setNewName] = useState(report.name);
-
-            const handleConfirm = () => {
-                if (newName.trim()) {
-                    onRename(newName.trim());
-                }
-            };
-
-            return (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-40">
-                    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-sm">
-                        <h3 className="font-bold text-lg dark:text-gray-200">Rename Report</h3>
-                        <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">Enter a new name for the report "{report.name}".</p>
-                        <input 
-                            type="text" 
-                            value={newName} 
-                            onChange={(e) => setNewName(e.target.value)} 
-                            className="w-full mt-4 px-3 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white" 
-                            placeholder="New Report Name" 
-                        />
-                        <div className="mt-6 flex justify-end space-x-2">
-                            <button onClick={onCancel} className="px-4 py-2 bg-gray-200 dark:bg-gray-600 dark:text-white rounded-md">Cancel</button>
-                            <button onClick={handleConfirm} className="px-4 py-2 bg-cyan-600 text-white rounded-md">Rename</button>
+                            <button onClick={() => name && onSave(name, isWidget, isShared, targetMin, targetMax, targetType, reverseRange)} className="px-4 py-2 bg-cyan-600 text-white rounded-md">Save</button>
                         </div>
                     </div>
                 </div>
