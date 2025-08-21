@@ -8,8 +8,8 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <!-- React and Babel -->
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
-    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <!-- Firebase SDKs (Compat Version) -->
     <script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.6.7/firebase-auth-compat.js"></script>
@@ -66,6 +66,66 @@
         }
         
         const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+        
+        const getRelativeDateRange = (period) => {
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const endDate = new Date(today);
+            endDate.setHours(23, 59, 59, 999);
+            let startDate = new Date(today);
+            
+            switch (period) {
+                case 'Today':
+                    // Start date is already today
+                    break;
+                case 'This Week':
+                    const day = startDate.getDay();
+                    const diff = startDate.getDate() - day + (day === 0 ? -6 : 1); // Adjust for Sunday as start of week
+                    startDate = new Date(startDate.setDate(diff));
+                    startDate.setHours(0, 0, 0, 0);
+                    break;
+                case 'This Month':
+                    startDate = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
+                    break;
+                case 'This Year':
+                    startDate = new Date(startDate.getFullYear(), 0, 1);
+                    break;
+                case 'Last Day':
+                    startDate.setDate(startDate.getDate() - 1);
+                    break;
+                case 'Last Week':
+                    const lastWeekDay = startDate.getDay();
+                    const lastWeekDiff = startDate.getDate() - lastWeekDay - 6; 
+                    startDate = new Date(startDate.setDate(lastWeekDiff));
+                    startDate.setHours(0, 0, 0, 0);
+                    const lastWeekEnd = new Date(startDate);
+                    lastWeekEnd.setDate(lastWeekEnd.getDate() + 6);
+                    endDate = lastWeekEnd;
+                    endDate.setHours(23, 59, 59, 999);
+                    break;
+                case 'Last Month':
+                    startDate = new Date(startDate.getFullYear(), startDate.getMonth() - 1, 1);
+                    const lastMonthEnd = new Date(startDate.getFullYear(), startDate.getMonth() + 1, 0);
+                    endDate = lastMonthEnd;
+                    endDate.setHours(23, 59, 59, 999);
+                    break;
+                case 'Last Quarter':
+                    const currentMonth = startDate.getMonth();
+                    const quarter = Math.floor(currentMonth / 3);
+                    startDate = new Date(startDate.getFullYear(), quarter * 3 - 3, 1);
+                    const lastQuarterEnd = new Date(startDate.getFullYear(), quarter * 3, 0);
+                    endDate = lastQuarterEnd;
+                    endDate.setHours(23, 59, 59, 999);
+                    break;
+                case 'Last Year':
+                    startDate = new Date(startDate.getFullYear() - 1, 0, 1);
+                    const lastYearEnd = new Date(startDate.getFullYear(), 11, 31);
+                    endDate = lastYearEnd;
+                    endDate.setHours(23, 59, 59, 999);
+                    break;
+            }
+            return { startDate: startDate.toISOString(), endDate: endDate.toISOString() };
+        };
 
         // --- Main App Component ---
         function App() {
@@ -79,6 +139,7 @@
             
             // Data stores
             const [allCustomers, setAllCustomers] = useState([]);
+            const [allOrders, setAllOrders] = useState([]); // New state for all orders
             const [groupsMap, setGroupsMap] = useState(new Map());
             const [segmentsMap, setSegmentsMap] = useState(new Map());
             const [customAttrDefs, setCustomAttrDefs] = useState(new Map());
@@ -135,6 +196,13 @@
                             ...report,
                             filters: Object.entries(report.filters || {}).reduce((acc, [key, val]) => {
                                 acc[key] = { ...val, values: new Set(val.values || []), excludedValues: new Set(val.excludedValues || []) };
+                                // Re-calculate date range for relative filters
+                                if (val.relative_date_range) {
+                                     acc[key].date_range = getRelativeDateRange(val.relative_date_range);
+                                }
+                                if (val.excluded_relative_date_range) {
+                                    acc[key].excluded_date_range = getRelativeDateRange(val.excluded_relative_date_range);
+                                }
                                 return acc;
                             }, {}),
                         }));
@@ -183,6 +251,47 @@
                 setAllCustomers(uniqueCustomers);
             }, [squareAccessToken]);
 
+            const fetchAllOrders = useCallback(async (locationId) => {
+                setLoadingMessage('Fetching all orders...');
+                let fetchedOrders = [];
+                let cursor = undefined;
+                do {
+                    const data = await apiFetch('/v2/orders/search', {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            location_ids: [locationId],
+                            query: {
+                                filter: {
+                                    state_filter: { states: ["COMPLETED"] }
+                                },
+                                sort: { sort_field: "CLOSED_AT", sort_order: "DESC" }
+                            },
+                            limit: 100, // Fetch in batches
+                            cursor: cursor
+                        })
+                    });
+                    if (data.orders) fetchedOrders.push(...data.orders);
+                    cursor = data.cursor;
+                    if (cursor) await delay(200); // Throttle requests
+                } while (cursor);
+
+                // Flatten orders into line items
+                const flattenedItems = fetchedOrders.flatMap(order => 
+                    (order.line_items || []).map(item => ({
+                        // Use a composite key that is guaranteed to be unique
+                        item_uid: `${order.id}-${item.uid}`,
+                        order_id: order.id,
+                        customer_id: order.customer_id,
+                        line_item_name: item.name,
+                        quantity: parseFloat(item.quantity),
+                        purchase_date: order.closed_at,
+                        order_total: order.total_money.amount / 100 // Convert cents to dollars
+                    }))
+                );
+                
+                setAllOrders(flattenedItems);
+            }, [squareAccessToken]);
+
             useEffect(() => {
                 if (squareAccessToken) {
                     const fetchAllCustomAttributeDefinitions = async () => {
@@ -219,11 +328,14 @@
                             const activeLocation = locationData.locations?.find(loc => loc.status === 'ACTIVE');
                             if (activeLocation) {
                                 setLocationId(activeLocation.id);
+                                // Await both customer and order fetches
+                                await Promise.all([
+                                    fetchAllCustomers(),
+                                    fetchAllOrders(activeLocation.id)
+                                ]);
                             } else {
                                 throw new Error("No active location found for this business.");
                             }
-                            
-                            await fetchAllCustomers();
 
                         } catch (err) {
                             if (err.message.toLowerCase().includes('authorized')) {
@@ -243,7 +355,7 @@
                     
                     fetchInitialData();
                 }
-            }, [squareAccessToken, user, fetchAllCustomers]);
+            }, [squareAccessToken, user, fetchAllCustomers, fetchAllOrders]);
             
             const handleUpdateCustomAttribute = async (customerId, attributeKey, value) => {
                 try {
@@ -303,9 +415,12 @@
                     }
 
                     try {
-                        const [customerData, ordersData, customAttributesData] = await Promise.all([
+                        const [customerData, customAttributesData] = await Promise.all([
                             apiFetch(`/v2/customers/${customer.id}`),
-                            apiFetch('/v2/orders/search', {
+                            apiFetch(`/v2/customers/${customer.id}/custom-attributes`)
+                        ]);
+                        
+                        const customerOrdersData = await apiFetch('/v2/orders/search', {
                                 method: 'POST',
                                 body: JSON.stringify({
                                     location_ids: [locationId],
@@ -315,16 +430,14 @@
                                             state_filter: { states: ["COMPLETED"] }
                                         },
                                         sort: { sort_field: "CLOSED_AT", sort_order: "DESC" }
-                                    },
-                                    limit: 1
+                                    }
                                 })
-                            }),
-                            apiFetch(`/v2/customers/${customer.id}/custom-attributes`)
-                        ]);
-                        
+                            });
+
                         const fullCustomerProfile = { 
                             ...customerData.customer, 
-                            last_visit: ordersData.orders?.[0]?.closed_at,
+                            orders: customerOrdersData.orders || [], // Add the full order history
+                            last_visit: customerOrdersData.orders?.[0]?.closed_at,
                             custom_attributes: (customAttributesData.custom_attributes || []).reduce((acc, attr) => {
                                 acc[attr.key] = attr;
                                 return acc;
@@ -352,8 +465,20 @@
                         serializedFilters[key] = {
                             ...filterConfig,
                             values: Array.from(filterConfig.values || []),
-                            excludedValues: Array.from(filterConfig.excludedValues || [])
+                            excludedValues: Array.from(filterConfig.excludedValues || []),
                         };
+                        if (filterConfig.date_range) {
+                            serializedFilters[key].date_range = {
+                                startDate: filterConfig.date_range.startDate,
+                                endDate: filterConfig.date_range.endDate
+                            };
+                        }
+                        if (filterConfig.excluded_date_range) {
+                            serializedFilters[key].excluded_date_range = {
+                                startDate: filterConfig.excluded_date_range.startDate,
+                                endDate: filterConfig.excluded_date_range.endDate
+                            };
+                        }
                     }
                 }
                 const newReport = { ...report, filters: serializedFilters };
@@ -454,7 +579,7 @@
                 return <SettingsPage onSaveToken={handleSaveToken} userEmail={user.email} />;
             }
             
-            const combinedReports = [...personalReports.map(r => ({...r, isPersonal: true})), ...publicReports.map(r => ({...r, isPersonal: false}))];
+            const combinedReports = [...(personalReports || []).map(r => ({...r, isPersonal: true})), ...(publicReports || []).map(r => ({...r, isPersonal: false}))];
             const widgets = combinedReports.filter(r => r.isWidget);
 
             const renderMainContent = () => {
@@ -463,14 +588,14 @@
 
                 switch(currentView) {
                     case 'profile':
-                        return customerDetails ? <CustomerProfile customer={customerDetails} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} onBack={() => setCurrentView('directory')} onUpdateCustomAttribute={handleUpdateCustomAttribute} /> : <div className="flex justify-center items-center h-full"><div className="spinner"></div></div>;
+                        return customerDetails ? <CustomerProfile customer={customerDetails} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} onBack={() => setCurrentView('directory')} onUpdateCustomAttribute={handleUpdateCustomAttribute} allOrders={allOrders} /> : <div className="flex justify-center items-center h-full"><div className="spinner"></div></div>;
                     case 'reports':
-                        return <ReportsPage allCustomers={allCustomers} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} onSelectCustomer={handleSelectCustomer} onBack={() => setCurrentView('dashboard')} savedReports={combinedReports} onSaveReport={handleSaveReport} onUpdateReport={handleUpdateReport} onDeleteReport={handleDeleteReport} initialReport={reportToLoad} onInitialReportLoaded={() => setReportToLoad(null)} totalCustomers={allCustomers.length} />;
+                        return <ReportsPage allCustomers={allCustomers} allOrders={allOrders} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} onSelectCustomer={handleSelectCustomer} onBack={() => setCurrentView('dashboard')} savedReports={combinedReports} onSaveReport={handleSaveReport} onUpdateReport={handleUpdateReport} onDeleteReport={handleDeleteReport} initialReport={reportToLoad} onInitialReportLoaded={() => setReportToLoad(null)} totalCustomers={allCustomers.length} />;
                     case 'directory':
                         return <DirectoryPage allCustomers={allCustomers} onSelectCustomer={handleSelectCustomer} onBack={() => setCurrentView('dashboard')} />;
                     case 'dashboard':
                     default:
-                        return <Dashboard onNavigate={handleNavigate} widgets={widgets} allCustomers={allCustomers} groupsMap={groupsMap} segmentsMap={segmentsMap} onSelectCustomer={handleSelectCustomer} totalCustomers={allCustomers.length} />;
+                        return <Dashboard onNavigate={handleNavigate} widgets={widgets} allCustomers={allCustomers} allOrders={allOrders} groupsMap={groupsMap} segmentsMap={segmentsMap} onSelectCustomer={handleSelectCustomer} totalCustomers={allCustomers.length} />;
                 }
             };
 
@@ -562,7 +687,7 @@
             );
         }
 
-        function Dashboard({ onNavigate, widgets, allCustomers, groupsMap, segmentsMap, onSelectCustomer, totalCustomers }) {
+        function Dashboard({ onNavigate, widgets, allCustomers, allOrders, groupsMap, segmentsMap, onSelectCustomer }) {
             const handleWidgetClick = (widget) => {
                 onNavigate('reports', widget);
             };
@@ -581,24 +706,35 @@
                             <p className="text-gray-500 dark:text-gray-400 mt-2">Filter customers by profile information.</p>
                         </button>
                         {widgets.map((widget) => (
-                            <DashboardWidget key={widget.id} widget={widget} allCustomers={allCustomers} groupsMap={groupsMap} segmentsMap={segmentsMap} onSelectCustomer={onSelectCustomer} onWidgetClick={handleWidgetClick} totalCustomers={totalCustomers} />
+                            <DashboardWidget 
+                                key={widget.id} 
+                                widget={widget} 
+                                allCustomers={allCustomers} 
+                                allOrders={allOrders} 
+                                groupsMap={groupsMap} 
+                                segmentsMap={segmentsMap} 
+                                onWidgetClick={handleWidgetClick} 
+                            />
                         ))}
                     </div>
                 </div>
             );
         }
 
-        function DashboardWidget({ widget, allCustomers, groupsMap, segmentsMap, onSelectCustomer, onWidgetClick, totalCustomers }) {
-             const filteredCustomers = useMemo(() => {
-                let customers = [...allCustomers];
-                return customers.filter(customer => {
+        function DashboardWidget({ widget, allCustomers, allOrders, groupsMap, segmentsMap, onWidgetClick }) {
+            const filteredData = useMemo(() => {
+                let data = widget.reportType === 'customer' ? (allCustomers || []) : (allOrders || []);
+                
+                return data.filter(row => {
                     return Object.entries(widget.filters || {}).every(([key, filterConfig]) => {
-                        if (!filterConfig) return true;
+                        if (!filterConfig || (filterConfig.values?.size === 0 && !filterConfig.date_range && !filterConfig.relative_date_range && filterConfig.excludedValues?.size === 0 && !filterConfig.excluded_date_range)) return true;
                         
                         const field = widget.fields.find(c => c.key === key);
                         if (!field) return true;
-
-                        if (field.key === 'groups') {
+                        
+                        let value;
+                        if (widget.reportType === 'customer' && field.key === 'groups') {
+                            const customer = row;
                             const groupNames = (customer.group_ids || []).map(id => groupsMap.get(id));
                             const segmentNames = (customer.segment_ids || []).map(id => segmentsMap.get(id));
                             const customerGroups = new Set([...groupNames, ...segmentNames].filter(Boolean));
@@ -623,32 +759,73 @@
                             }
                             
                             return matchesIncluded && !matchesExcluded;
+                        }
 
-                        } else if (filterConfig.values && filterConfig.values.size > 0) {
-                            let customerValue = getNestedValue(customer, field.path);
-                            if (field.path.includes('created_at')) customerValue = formatSimpleDate(customerValue);
-                            customerValue = (customerValue || 'N/A').toString();
-                            return filterConfig.values.has(customerValue);
+                        value = getNestedValue(row, field.path);
+                        if (field.path && (field.path.includes('created_at') || field.path.includes('purchase_date'))) {
+                            const rowDate = value ? new Date(value) : null;
+                            
+                            let includedRange = filterConfig.date_range;
+                            if (filterConfig.relative_date_range) {
+                                includedRange = getRelativeDateRange(filterConfig.relative_date_range);
+                            }
+                            
+                            const startDate = includedRange?.startDate ? new Date(includedRange.startDate) : null;
+                            const endDate = includedRange?.endDate ? new Date(includedRange.endDate) : null;
+                            
+                            const matchesDateRange = (!startDate || rowDate >= startDate) && (!endDate || rowDate <= endDate);
+                            
+                            let isExcluded = false;
+                            if (filterConfig.excluded_date_range) {
+                                let excludedRange = filterConfig.excluded_date_range;
+                                if (filterConfig.excluded_relative_date_range) {
+                                    excludedRange = getRelativeDateRange(filterConfig.excluded_relative_date_range);
+                                }
+                                const excludedStartDate = excludedRange.startDate ? new Date(excludedRange.startDate) : null;
+                                const excludedEndDate = excludedRange.endDate ? new Date(excludedRange.endDate) : null;
+                                isExcluded = (!excludedStartDate || rowDate >= excludedStartDate) && (!excludedEndDate || rowDate <= excludedEndDate);
+                            }
+                            
+                            return matchesDateRange && !isExcluded;
+
                         }
                         
-                        return true;
+                        const rowValue = (value || 'N/A').toString().toLowerCase();
+
+                        const valuesToMatch = Array.from(filterConfig.values || []).map(v => String(v).toLowerCase());
+                        const excludedValues = Array.from(filterConfig.excludedValues || []).map(v => String(v).toLowerCase());
+
+                        const matchesIncluded = valuesToMatch.length === 0 || valuesToMatch.some(v => rowValue === v);
+                        const matchesExcluded = excludedValues.length > 0 && excludedValues.some(v => rowValue === v);
+                        
+                        return matchesIncluded && !matchesExcluded;
                     });
                 });
-            }, [widget, allCustomers, groupsMap, segmentsMap]);
+            }, [widget, allCustomers, allOrders, groupsMap, segmentsMap]);
 
-            const percentage = totalCustomers > 0 ? (filteredCustomers.length / totalCustomers * 100).toFixed(1) : 0;
+            const customerCount = useMemo(() => {
+                if (widget.reportType === 'customer') {
+                    return filteredData.length;
+                } else { // 'item' report type
+                    const uniqueCustomerIds = new Set(filteredData.map(item => item.customer_id).filter(id => id));
+                    return uniqueCustomerIds.size;
+                }
+            }, [filteredData, widget.reportType]);
+
+            const totalCount = widget.reportType === 'customer' ? allCustomers.length : allOrders.length;
+            const percentage = totalCount > 0 ? (customerCount / totalCount * 100).toFixed(1) : 0;
             
             let borderColor = 'border-transparent';
             let textColor = 'text-cyan-600 dark:text-cyan-400';
 
             if (widget.targetMin && widget.targetMax) {
-                const count = filteredCustomers.length;
+                const count = customerCount;
                 let min = widget.targetMin;
                 let max = widget.targetMax;
 
                 if (widget.targetType === 'percentage') {
-                    min = Math.floor((widget.targetMin / 100) * totalCustomers);
-                    max = Math.floor((widget.targetMax / 100) * totalCustomers);
+                    min = (widget.targetMin / 100) * (widget.reportType === 'customer' ? allCustomers.length : allOrders.length);
+                    max = (widget.targetMax / 100) * (widget.reportType === 'customer' ? allCustomers.length : allOrders.length);
                 }
 
                 const below = count < min;
@@ -681,10 +858,11 @@
 
             const getTargetDifference = () => {
                 if (widget.targetMin && widget.targetMax) {
-                    const count = filteredCustomers.length;
+                    const count = customerCount;
                     
                     if (widget.targetType === 'percentage') {
-                        const currentPercentage = (count / totalCustomers) * 100;
+                        const total = widget.reportType === 'customer' ? allCustomers.length : allOrders.length;
+                        const currentPercentage = (count / total) * 100;
                         if (currentPercentage < widget.targetMin) {
                             return `${(currentPercentage - widget.targetMin).toFixed(1)}%`;
                         }
@@ -712,8 +890,8 @@
                     <h3 className="text-xl font-semibold text-gray-800 dark:text-gray-200">{widget.name}</h3>
                     <div className="flex justify-between items-end mt-4">
                         <div>
-                            <p className={`text-5xl font-bold ${textColor}`}>{filteredCustomers.length}</p>
-                            <p className="text-gray-500 dark:text-gray-400">Customers ({percentage}%)</p>
+                            <p className={`text-5xl font-bold ${textColor}`}>{customerCount}</p>
+                            <p className="text-gray-500 dark:text-gray-400">{widget.reportType === 'customer' ? `Customers (${percentage}%)` : `Customers`}</p>
                         </div>
                         {targetDifference !== null && (
                             <div className={`flex items-center text-lg font-semibold ${textColor}`}>
@@ -764,8 +942,8 @@
             );
         }
 
-        function ReportsPage({ allCustomers, groupsMap, segmentsMap, customAttrDefs, onSelectCustomer, onBack, savedReports, onSaveReport, onUpdateReport, onDeleteReport, initialReport, onInitialReportLoaded, totalCustomers }) {
-            const getInitialFields = useCallback(() => {
+        function ReportsPage({ allCustomers, allOrders, groupsMap, segmentsMap, customAttrDefs, onSelectCustomer, onBack, savedReports, onSaveReport, onUpdateReport, onDeleteReport, initialReport, onInitialReportLoaded, totalCustomers }) {
+            const getCustomerReportFields = useCallback(() => {
                 const standardFields = [
                     { key: 'given_name', label: 'First Name', visible: true, path: ['given_name'] },
                     { key: 'family_name', label: 'Last Name', visible: true, path: ['family_name'] },
@@ -780,26 +958,55 @@
                 return [...standardFields, ...customFields];
             }, [customAttrDefs]);
 
-            const [fields, setFields] = useState(getInitialFields);
-            const [fieldFilters, setFieldFilters] = useState({});
-            const [sortConfig, setSortConfig] = useState({ key: 'given_name', direction: 'ascending' });
+            const getItemReportFields = useCallback(() => {
+                return [
+                    { key: 'given_name', label: 'First Name', visible: true, path: ['customer', 'given_name'] },
+                    { key: 'family_name', label: 'Last Name', visible: true, path: ['customer', 'family_name'] },
+                    { key: 'line_item_name', label: 'Line Item', visible: true, path: ['line_item_name'] },
+                    { key: 'quantity', label: 'Quantity', visible: true, path: ['quantity'] },
+                    { key: 'purchase_date', label: 'Purchase Date', visible: true, path: ['purchase_date'] },
+                ];
+            }, []);
+
+            const [reportType, setReportType] = useState(initialReport?.reportType || 'customer');
+            const [fields, setFields] = useState(initialReport?.fields || (initialReport?.reportType === 'item' ? getItemReportFields() : getCustomerReportFields()));
+            const [fieldFilters, setFieldFilters] = useState(initialReport?.filters || {});
+            const [sortConfig, setSortConfig] = useState(initialReport?.sortConfig || { key: 'given_name', direction: 'ascending' });
             const [activeFieldFilterPopup, setActiveFieldFilterPopup] = useState(null);
             const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
             
             const visibleFields = useMemo(() => fields.filter(c => c.visible), [fields]);
+            
+            // Map customers by ID for quick lookup
+            const customerMap = useMemo(() => {
+                const map = new Map();
+                (allCustomers || []).forEach(c => map.set(c.id, c));
+                return map;
+            }, [allCustomers]);
+            
+            const enrichedOrders = useMemo(() => {
+                return (allOrders || []).map(order => ({
+                    ...order,
+                    customer: customerMap.get(order.customer_id) || {}
+                }));
+            }, [allOrders, customerMap]);
 
-            const filteredAndSortedCustomers = useMemo(() => {
-                let customers = [...allCustomers];
+            const dataToDisplay = reportType === 'customer' ? (allCustomers || []) : enrichedOrders;
+
+            const filteredAndSortedData = useMemo(() => {
+                let data = [...dataToDisplay];
                 
                 // Apply field filters
-                customers = customers.filter(customer => {
+                data = data.filter(row => {
                     return Object.entries(fieldFilters).every(([key, filterConfig]) => {
                         if (!filterConfig) return true;
                         
                         const field = fields.find(c => c.key === key);
                         if (!field) return true;
-
+                        
+                        // Special handling for the 'groups' field
                         if (field.key === 'groups') {
+                            const customer = row; // In customer report, the row is the customer
                             const groupNames = (customer.group_ids || []).map(id => groupsMap.get(id));
                             const segmentNames = (customer.segment_ids || []).map(id => segmentsMap.get(id));
                             const customerGroups = new Set([...groupNames, ...segmentNames].filter(Boolean));
@@ -824,31 +1031,79 @@
                             }
                             
                             return matchesIncluded && !matchesExcluded;
+                        }
 
-                        } else if (filterConfig.values && filterConfig.values.size > 0) {
-                            let customerValue = getNestedValue(customer, field.path);
-                            if (field.path.includes('created_at')) customerValue = formatSimpleDate(customerValue);
-                            customerValue = (customerValue || 'N/A').toString();
-                            return filterConfig.values.has(customerValue);
+                        let value = getNestedValue(row, field.path);
+                        if (field.path && (field.path.includes('created_at') || field.path.includes('purchase_date'))) {
+                             // Handle date filters
+                            const rowDate = value ? new Date(value) : null;
+                            
+                            let includedRange = filterConfig.date_range;
+                            if (filterConfig.relative_date_range) {
+                                includedRange = getRelativeDateRange(filterConfig.relative_date_range);
+                            }
+                            
+                            const startDate = includedRange?.startDate ? new Date(includedRange.startDate) : null;
+                            const endDate = includedRange?.endDate ? new Date(includedRange.endDate) : null;
+
+                            const matchesDateRange = (!startDate || rowDate >= startDate) && (!endDate || rowDate <= endDate);
+                            
+                            let isExcluded = false;
+                            if (filterConfig.excluded_date_range || filterConfig.excluded_relative_date_range) {
+                                let excludedRange = filterConfig.excluded_date_range;
+                                if (filterConfig.excluded_relative_date_range) {
+                                    excludedRange = getRelativeDateRange(filterConfig.excluded_relative_date_range);
+                                }
+                                const excludedStartDate = excludedRange.startDate ? new Date(excludedRange.startDate) : null;
+                                const excludedEndDate = excludedRange.endDate ? new Date(excludedRange.endDate) : null;
+                                isExcluded = (!excludedStartDate || rowDate >= excludedStartDate) && (!excludedEndDate || rowDate <= excludedEndDate);
+                            }
+                            
+                            return matchesDateRange && !isExcluded;
                         }
                         
-                        return true;
+                        const rowValue = (value || 'N/A').toString().toLowerCase();
+
+                        const valuesToMatch = Array.from(filterConfig.values || []);
+                        const excludedValues = Array.from(filterConfig.excludedValues || []);
+                        
+                        const isExactMatchField = ['line_item_name'].includes(field.key);
+                        
+                        let matchesValue = valuesToMatch.length === 0 || valuesToMatch.some(v => 
+                            isExactMatchField ? rowValue === String(v).toLowerCase() : rowValue.includes(String(v).toLowerCase())
+                        );
+
+                        let matchesExcluded = excludedValues.length > 0 && excludedValues.some(v => 
+                            isExactMatchField ? rowValue === String(v).toLowerCase() : rowValue.includes(String(v).toLowerCase())
+                        );
+
+                        return matchesValue && !matchesExcluded;
                     });
                 });
 
                 if (sortConfig.key) {
-                    customers.sort((a, b) => {
+                    data.sort((a, b) => {
                         const field = fields.find(c => c.key === sortConfig.key);
                         if (!field) return 0;
                         let aVal, bVal;
+                        
                         if (field.key === 'groups') {
-                             const aGroups = [...(a.group_ids || []).map(id => groupsMap.get(id)), ...(a.segment_ids || []).map(id => segmentsMap.get(id))].join('');
-                             const bGroups = [...(b.group_ids || []).map(id => groupsMap.get(id)), ...(b.segment_ids || []).map(id => segmentsMap.get(id))].join('');
-                             aVal = aGroups; bVal = bGroups;
+                            const aGroups = [...(a.group_ids || []).map(id => groupsMap.get(id)), ...(a.segment_ids || []).map(id => segmentsMap.get(id))].join('');
+                            const bGroups = [...(b.group_ids || []).map(id => groupsMap.get(id)), ...(b.segment_ids || []).map(id => segmentsMap.get(id))].join('');
+                            aVal = aGroups; bVal = bGroups;
+                        } else if (field.key === 'quantity') {
+                            aVal = getNestedValue(a, field.path) || 0;
+                            bVal = getNestedValue(b, field.path) || 0;
+                        } else if (field.key === 'purchase_date' || field.key === 'created_at') {
+                            const aDate = getNestedValue(a, field.path);
+                            const bDate = getNestedValue(b, field.path);
+                            aVal = aDate ? new Date(aDate) : new Date(0);
+                            bVal = bDate ? new Date(bDate) : new Date(0);
                         } else {
                             aVal = getNestedValue(a, field.path) || ''; 
                             bVal = getNestedValue(b, field.path) || '';
                         }
+                        
                         if (typeof aVal === 'string' && typeof bVal === 'string') {
                             return sortConfig.direction === 'ascending' ? aVal.localeCompare(bVal) : bVal.localeCompare(aVal);
                         }
@@ -857,8 +1112,8 @@
                         return 0;
                     });
                 }
-                return customers;
-            }, [allCustomers, fieldFilters, sortConfig, fields, groupsMap, segmentsMap]);
+                return data;
+            }, [dataToDisplay, fieldFilters, sortConfig, fields, groupsMap, segmentsMap]);
             
             const handleModalSave = (name, isWidget, isShared, targetMin, targetMax, targetType, reverseRange) => {
                 const report = { 
@@ -868,6 +1123,7 @@
                     fields, 
                     isWidget, 
                     isShared,
+                    reportType, // Save the report type
                     targetMin: parseInt(targetMin, 10) || null,
                     targetMax: parseInt(targetMax, 10) || null,
                     targetType,
@@ -878,19 +1134,36 @@
             };
             
             const handleLoadReport = (report) => {
-                setFieldFilters(report.filters || {});
+                const filtersWithSets = Object.entries(report.filters).reduce((acc, [key, val]) => {
+                    acc[key] = { ...val, values: new Set(val.values), excludedValues: new Set(val.excludedValues) };
+                    return acc;
+                }, {});
+                setFieldFilters(filtersWithSets);
                 setSortConfig(report.sortConfig || { key: 'given_name', direction: 'ascending' });
-                setFields(report.fields || getInitialFields());
+                setReportType(report.reportType || 'customer');
+                setFields(report.fields || (report.reportType === 'item' ? getItemReportFields() : getCustomerReportFields()));
             };
-
+            
+            const handleReportTypeChange = (type) => {
+                setReportType(type);
+                setFieldFilters({});
+                setSortConfig({ key: 'given_name', direction: 'ascending' });
+                if (type === 'customer') {
+                    setFields(getCustomerReportFields());
+                } else {
+                    setFields(getItemReportFields());
+                }
+            };
+            
             useEffect(() => {
                 if (initialReport) {
                     handleLoadReport(initialReport);
                     onInitialReportLoaded();
                 }
-            }, [initialReport, onInitialReportLoaded, getInitialFields]);
+            }, [initialReport, onInitialReportLoaded, getCustomerReportFields, getItemReportFields]);
             
-            const percentage = totalCustomers > 0 ? (filteredAndSortedCustomers.length / totalCustomers * 100).toFixed(1) : 0;
+            const percentage = totalCustomers > 0 ? (filteredAndSortedData.length / totalCustomers * 100).toFixed(1) : 0;
+            const itemReportFields = getItemReportFields();
 
             return (
                 <div className="flex h-full">
@@ -906,32 +1179,65 @@
                     <div className="flex-1 p-8 overflow-y-auto">
                         <div className="flex justify-between items-center mb-6">
                             <button onClick={onBack} className="text-cyan-600 dark:text-cyan-400 hover:text-cyan-800 dark:hover:text-cyan-200"> &larr; Back to Dashboard</button>
-                            <span className="text-gray-600 dark:text-gray-300 font-semibold">{filteredAndSortedCustomers.length} Customers ({percentage}%)</span>
+                            <div className="flex space-x-2 rounded-md shadow-sm" role="group">
+                                <button
+                                    type="button"
+                                    onClick={() => handleReportTypeChange('customer')}
+                                    className={`px-4 py-2 text-sm font-medium ${reportType === 'customer' ? 'bg-cyan-600 text-white' : 'bg-white text-gray-900 border border-gray-200'} rounded-l-md hover:bg-gray-100 dark:bg-gray-700 dark:border-gray-600 dark:text-white dark:hover:text-white dark:hover:bg-gray-600`}>
+                                    Customer Report
+                                </button>
+                                <button
+                                    type="button"
+                                    onClick={() => handleReportTypeChange('item')}
+                                    className={`px-4 py-2 text-sm font-medium ${reportType === 'item' ? 'bg-cyan-600 text-white' : 'bg-white text-gray-900 border border-gray-200'} rounded-r-md hover:bg-gray-100 dark:bg-gray-700 dark:border-gray-600 dark:text-white dark:hover:text-white dark:hover:bg-gray-600`}>
+                                    Item Report
+                                </button>
+                            </div>
+                            <span className="text-gray-600 dark:text-gray-300 font-semibold">{filteredAndSortedData.length} {reportType === 'customer' ? 'Customers' : 'Items'}</span>
                         </div>
                         <h2 className="text-4xl font-bold text-gray-800 dark:text-gray-200">Customer Report</h2>
                         <div className="mt-8 bg-white dark:bg-gray-800 rounded-lg shadow overflow-x-auto">
                             <table className="w-full text-sm text-left text-gray-500 dark:text-gray-400">
                                 <thead className="text-xs text-gray-700 dark:text-gray-400 uppercase bg-gray-50 dark:bg-gray-700">
-                                    <tr>{visibleFields.map(field => <SortableHeader key={field.key} field={field} setSortConfig={setSortConfig} sortConfig={sortConfig} setActiveFilterPopup={setActiveFieldFilterPopup} filters={fieldFilters} />)}</tr>
+                                    <tr>{visibleFields.map(field => <SortableHeader key={field.key} field={field} setSortConfig={setSortConfig} sortConfig={sortConfig} setActiveFilterPopup={setActiveFieldFilterPopup} filters={fieldFilters} reportType={reportType} allOrders={allOrders} allCustomers={allCustomers} groupsMap={groupsMap} segmentsMap={segmentsMap} />)}</tr>
                                 </thead>
                                 <tbody>
-                                    {filteredAndSortedCustomers.length === 0 && <tr><td colSpan={visibleFields.length} className="text-center p-4 text-gray-500 dark:text-gray-400">No customers match the current filters.</td></tr>}
-                                    {filteredAndSortedCustomers.map(customer => (
-                                        <tr key={customer.id} className="bg-white dark:bg-gray-800 border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600">
+                                    {filteredAndSortedData.length === 0 && <tr><td colSpan={visibleFields.length} className="text-center p-4 text-gray-500 dark:text-gray-400">No customers match the current filters.</td></tr>}
+                                    {filteredAndSortedData.map(row => (
+                                        <tr key={reportType === 'customer' ? row.id : row.item_uid} className="bg-white dark:bg-gray-800 border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600">
                                             {visibleFields.map(field => {
                                                 let cellContent = 'N/A';
-                                                if (field.key === 'given_name') {
-                                                    cellContent = <button onClick={() => onSelectCustomer(customer)} className="text-cyan-600 dark:text-cyan-400 hover:underline font-medium whitespace-nowrap">{customer.given_name || ''}</button>;
-                                                } else if (field.key === 'groups') {
-                                                    const groupNames = (customer.group_ids || []).map(id => ({ name: groupsMap.get(id) || id, color: 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300' }));
-                                                    const segmentNames = (customer.segment_ids || []).map(id => ({ name: segmentsMap.get(id) || id, color: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300' }));
-                                                    const allPills = [...groupNames, ...segmentNames];
-                                                    cellContent = <div className="flex flex-wrap gap-1">{allPills.map((pill, i) => <Pill key={i} text={pill.name} color={pill.color} />)}</div>;
-                                                } else if (field.path.includes('created_at')) {
-                                                    cellContent = formatSimpleDate(getNestedValue(customer, field.path));
-                                                } else {
-                                                    cellContent = getNestedValue(customer, field.path) || 'N/A';
+                                                
+                                                if (reportType === 'customer') {
+                                                    const customer = row;
+                                                    if (field.key === 'given_name') {
+                                                        cellContent = <button onClick={() => onSelectCustomer(customer)} className="text-cyan-600 dark:text-cyan-400 hover:underline font-medium whitespace-nowrap">{customer.given_name || ''}</button>;
+                                                    } else if (field.key === 'groups') {
+                                                        const groupNames = (customer.group_ids || []).map(id => ({ name: groupsMap.get(id) || id, color: 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300' }));
+                                                        const segmentNames = (customer.segment_ids || []).map(id => ({ name: segmentsMap.get(id) || id, color: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300' }));
+                                                        const allPills = [...groupNames, ...segmentNames];
+                                                        cellContent = <div className="flex flex-wrap gap-1">{allPills.map((pill, i) => <Pill key={i} text={pill.name} color={pill.color} />)}</div>;
+                                                    } else if (field.path.includes('created_at')) {
+                                                        cellContent = formatSimpleDate(getNestedValue(customer, field.path));
+                                                    } else {
+                                                        cellContent = getNestedValue(customer, field.path) || 'N/A';
+                                                    }
+                                                } else { // Item report
+                                                    if (field.key === 'given_name') {
+                                                        cellContent = <button onClick={() => onSelectCustomer(row.customer)} className="text-cyan-600 dark:text-cyan-400 hover:underline font-medium whitespace-nowrap">{row.customer.given_name || ''}</button>;
+                                                    } else if (field.key === 'family_name') {
+                                                        cellContent = row.customer.family_name || 'N/A';
+                                                    } else if (field.key === 'line_item_name') {
+                                                        cellContent = row.line_item_name || 'N/A';
+                                                    } else if (field.key === 'quantity') {
+                                                        cellContent = row.quantity;
+                                                    } else if (field.key === 'purchase_date') {
+                                                        cellContent = formatSimpleDate(row.purchase_date);
+                                                    } else {
+                                                        cellContent = getNestedValue(row, field.path) || 'N/A';
+                                                    }
                                                 }
+
                                                 return <td key={field.key} className="px-6 py-4 whitespace-nowrap">{cellContent}</td>;
                                             })}
                                         </tr>
@@ -940,7 +1246,7 @@
                             </table>
                         </div>
                     </div>
-                    {activeFieldFilterPopup && <FilterPopup field={activeFieldFilterPopup} allCustomers={allCustomers} filters={fieldFilters} setFilters={setFieldFilters} onClose={() => setActiveFieldFilterPopup(null)} getNestedValue={getNestedValue} groupsMap={groupsMap} segmentsMap={segmentsMap} />}
+                    {activeFieldFilterPopup && <FilterPopup field={activeFieldFilterPopup} allCustomers={allCustomers} allOrders={allOrders} filters={fieldFilters} setFilters={setFieldFilters} onClose={() => setActiveFieldFilterPopup(null)} getNestedValue={getNestedValue} groupsMap={groupsMap} segmentsMap={segmentsMap} reportType={reportType} />}
                     {isSaveModalOpen && <SaveReportModal onSave={handleModalSave} onCancel={() => setIsSaveModalOpen(false)} />}
                 </div>
             );
@@ -948,9 +1254,10 @@
         
         // --- Standalone Components ---
         
-        const SortableHeader = ({ field, setSortConfig, sortConfig, setActiveFilterPopup, filters }) => {
+        const SortableHeader = ({ field, setSortConfig, sortConfig, setActiveFilterPopup, filters, reportType, allOrders, allCustomers, groupsMap, segmentsMap }) => {
             const isSorted = sortConfig.key === field.key;
-            const isFiltered = filters[field.key] && ((filters[field.key].values && filters[field.key].values.size > 0) || (filters[field.key].condition && filters[field.key].condition.type !== 'none'));
+            const isFiltered = filters[field.key] && (filters[field.key].values?.size > 0 || filters[field.key].date_range || filters[field.key].relative_date_range);
+            const isDateFilter = field.key === 'created_at' || field.key === 'purchase_date';
 
             return (
                 <th scope="col" className="px-6 py-3">
@@ -967,17 +1274,20 @@
             );
         };
 
-        function FilterPopup({ field, allCustomers, filters, setFilters, onClose, getNestedValue, groupsMap, segmentsMap }) {
+        function FilterPopup({ field, allCustomers, allOrders, filters, setFilters, onClose, getNestedValue, groupsMap, segmentsMap, reportType }) {
+            const dataForFilter = reportType === 'customer' ? allCustomers : allOrders;
+            const isDateField = field.key === 'created_at' || field.key === 'purchase_date';
+
             const getFieldValues = () => {
                 const values = new Set();
-                allCustomers.forEach(customer => {
+                dataForFilter.forEach(row => {
                     let value;
-                    if (field.key === 'groups') {
-                        (customer.group_ids || []).forEach(id => { if(groupsMap.has(id)) values.add(groupsMap.get(id))});
-                        (customer.segment_ids || []).forEach(id => { if(segmentsMap.has(id)) values.add(segmentsMap.get(id))});
+                    if (reportType === 'customer' && field.key === 'groups') {
+                        (row.group_ids || []).forEach(id => { if(groupsMap.has(id)) values.add(groupsMap.get(id))});
+                        (row.segment_ids || []).forEach(id => { if(segmentsMap.has(id)) values.add(segmentsMap.get(id))});
                     } else {
-                        value = getNestedValue(customer, field.path);
-                        if (field.path && field.path.includes('created_at')) {
+                        value = getNestedValue(row, field.path);
+                        if (isDateField) {
                             value = formatSimpleDate(value);
                         }
                         values.add((value || 'N/A').toString());
@@ -989,6 +1299,21 @@
             const [uniqueValues] = useState(getFieldValues);
             const [checkedValues, setCheckedValues] = useState(filters[field.key]?.values || new Set());
             const [excludedValues, setExcludedValues] = useState(filters[field.key]?.excludedValues || new Set());
+            
+            const initialDateMode = (filters[field.key]?.relative_date_range || filters[field.key]?.excluded_relative_date_range) ? 'relative' : 'custom';
+            const [dateMode, setDateMode] = useState(initialDateMode);
+
+            const [dateRange, setDateRange] = useState(filters[field.key]?.date_range || { startDate: '', endDate: '' });
+            const [excludedDateRange, setExcludedDateRange] = useState(filters[field.key]?.excluded_date_range || { startDate: '', endDate: '' });
+            
+            const initialRelativeDate = filters[field.key]?.relative_date_range || '';
+            const [relativePeriod, setRelativePeriod] = useState(initialRelativeDate.split(' ')[0] || '');
+            const [relativeUnit, setRelativeUnit] = useState(initialRelativeDate.split(' ')[1] || '');
+
+            const initialExcludedRelativeDate = filters[field.key]?.excluded_relative_date_range || '';
+            const [excludedRelativePeriod, setExcludedRelativePeriod] = useState(initialExcludedRelativeDate.split(' ')[0] || '');
+            const [excludedRelativeUnit, setExcludedRelativeUnit] = useState(initialExcludedRelativeDate.split(' ')[1] || '');
+            
             const [searchTerm, setSearchTerm] = useState('');
             const [matchMode, setMatchMode] = useState(filters[field.key]?.mode || 'any');
 
@@ -1000,9 +1325,59 @@
                 else newChecked.add(value);
                 setter(newChecked);
             };
+            
+            const handleDateRangeChange = (e, rangeType) => {
+                const { name, value } = e.target;
+                if (rangeType === 'included') {
+                    setDateRange(prev => ({ ...prev, [name]: value }));
+                } else {
+                    setExcludedDateRange(prev => ({ ...prev, [name]: value }));
+                }
+            };
+            
+            const handleRelativeDateChange = (e, rangeType) => {
+                const { name, value } = e.target;
+                if (rangeType === 'included') {
+                    if (name === 'period') {
+                        setRelativePeriod(value);
+                    } else {
+                        setRelativeUnit(value);
+                    }
+                    setDateRange({ startDate: '', endDate: '' });
+                } else {
+                    if (name === 'period') {
+                        setExcludedRelativePeriod(value);
+                    } else {
+                        setExcludedRelativeUnit(value);
+                    }
+                    setExcludedDateRange({ startDate: '', endDate: '' });
+                }
+            };
 
             const handleApply = () => {
-                setFilters(prev => ({ ...prev, [field.key]: { values: checkedValues, excludedValues: excludedValues, mode: matchMode } }));
+                const newFilter = {
+                    values: checkedValues, 
+                    excludedValues: excludedValues, 
+                    mode: matchMode
+                };
+                if (isDateField) {
+                    if (dateMode === 'relative') {
+                        if (relativePeriod && relativeUnit) {
+                            newFilter.relative_date_range = `${relativePeriod} ${relativeUnit}`;
+                        }
+                        if (excludedRelativePeriod && excludedRelativeUnit) {
+                            newFilter.excluded_relative_date_range = `${excludedRelativePeriod} ${excludedRelativeUnit}`;
+                        }
+                    } else { // Custom date mode
+                        if (dateRange.startDate || dateRange.endDate) {
+                            newFilter.date_range = dateRange;
+                        }
+                        if (excludedDateRange.startDate || excludedDateRange.endDate) {
+                            newFilter.excluded_date_range = excludedDateRange;
+                        }
+                    }
+                }
+                setFilters(prev => ({ ...prev, [field.key]: newFilter }));
                 onClose();
             };
             
@@ -1043,31 +1418,95 @@
                         )}
 
                         <div className="mt-4">
-                            <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Search values..." className="w-full px-2 py-1 border rounded-md text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white mb-2"/>
-                            <div className="grid grid-cols-2 gap-4">
-                                <div>
-                                    <h4 className="text-sm font-semibold mb-2 dark:text-gray-300">Match These</h4>
-                                    <div className="max-h-40 overflow-y-auto border rounded-md p-2 space-y-1 dark:border-gray-700">
-                                        {filteredUniqueValues.map(value => (
-                                            <label key={`include-${value}`} className="flex items-center text-sm hover:bg-gray-50 dark:hover:bg-gray-700 rounded p-1 dark:text-gray-300">
-                                                <input type="checkbox" checked={checkedValues.has(value)} onChange={() => handleCheck(value, false)} className="mr-2 h-4 w-4 text-cyan-600 border-gray-300 rounded focus:ring-cyan-500 dark:bg-gray-600 dark:border-gray-500"/>
-                                                <span className="truncate">{value}</span>
-                                            </label>
-                                        ))}
+                            {isDateField ? (
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <h4 className="text-sm font-semibold mb-2 dark:text-gray-300">Match These</h4>
+                                        <select value={dateMode} onChange={(e) => setDateMode(e.target.value)} className="w-full px-2 py-1 border rounded-md text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white mb-2">
+                                            <option value="relative">Relative Range</option>
+                                            <option value="custom">Custom Range</option>
+                                        </select>
+                                        { dateMode === 'relative' ? (
+                                            <div className="flex space-x-2">
+                                                <select name="period" value={relativePeriod} onChange={(e) => handleRelativeDateChange(e, 'included')} className="w-1/2 px-2 py-1 border rounded-md text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white">
+                                                    <option value="">-</option>
+                                                    <option value="This">This</option>
+                                                    <option value="Last">Last</option>
+                                                </select>
+                                                <select name="unit" value={relativeUnit} onChange={(e) => handleRelativeDateChange(e, 'included')} className="w-1/2 px-2 py-1 border rounded-md text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white" disabled={!relativePeriod}>
+                                                    <option value="">-</option>
+                                                    <option value="Day">Day</option>
+                                                    <option value="Week">Week</option>
+                                                    <option value="Month">Month</option>
+                                                    <option value="Quarter">Quarter</option>
+                                                    <option value="Year">Year</option>
+                                                </select>
+                                            </div>
+                                        ) : (
+                                            <>
+                                                <input type="date" name="startDate" value={dateRange.startDate} onChange={e => handleDateRangeChange(e, 'included')} className="w-full px-2 py-1 border rounded-md text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white mb-2"/>
+                                                <input type="date" name="endDate" value={dateRange.endDate} onChange={e => handleDateRangeChange(e, 'included')} className="w-full px-2 py-1 border rounded-md text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white"/>
+                                            </>
+                                        )}
+                                    </div>
+                                    <div>
+                                        <h4 className="text-sm font-semibold mb-2 dark:text-gray-300">Do Not Match (NOT)</h4>
+                                        <select value={dateMode} onChange={(e) => setDateMode(e.target.value)} className="w-full px-2 py-1 border rounded-md text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white mb-2">
+                                            <option value="relative">Relative Range</option>
+                                            <option value="custom">Custom Range</option>
+                                        </select>
+                                        { dateMode === 'relative' ? (
+                                            <div className="flex space-x-2">
+                                                <select name="period" value={excludedRelativePeriod} onChange={(e) => handleExcludedRelativeDateChange(e, 'excluded')} className="w-1/2 px-2 py-1 border rounded-md text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white">
+                                                    <option value="">-</option>
+                                                    <option value="This">This</option>
+                                                    <option value="Last">Last</option>
+                                                </select>
+                                                <select name="unit" value={excludedRelativeUnit} onChange={(e) => handleExcludedRelativeDateChange(e, 'excluded')} className="w-1/2 px-2 py-1 border rounded-md text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white" disabled={!excludedRelativePeriod}>
+                                                    <option value="">-</option>
+                                                    <option value="Day">Day</option>
+                                                    <option value="Week">Week</option>
+                                                    <option value="Month">Month</option>
+                                                    <option value="Quarter">Quarter</option>
+                                                    <option value="Year">Year</option>
+                                                </select>
+                                            </div>
+                                        ) : (
+                                            <>
+                                                <input type="date" name="startDate" value={excludedDateRange.startDate} onChange={e => handleDateRangeChange(e, 'excluded')} className="w-full px-2 py-1 border rounded-md text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white mb-2"/>
+                                                <input type="date" name="endDate" value={excludedDateRange.endDate} onChange={e => handleDateRangeChange(e, 'excluded')} className="w-full px-2 py-1 border rounded-md text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white"/>
+                                            </>
+                                        )}
                                     </div>
                                 </div>
-                                <div>
-                                    <h4 className="text-sm font-semibold mb-2 dark:text-gray-300">Do Not Match (NOT)</h4>
-                                    <div className="max-h-40 overflow-y-auto border rounded-md p-2 space-y-1 dark:border-gray-700">
-                                        {filteredUniqueValues.map(value => (
-                                            <label key={`exclude-${value}`} className="flex items-center text-sm hover:bg-gray-50 dark:hover:bg-gray-700 rounded p-1 dark:text-gray-300">
-                                                <input type="checkbox" checked={excludedValues.has(value)} onChange={() => handleCheck(value, true)} className="mr-2 h-4 w-4 text-red-600 border-gray-300 rounded focus:ring-red-500 dark:bg-gray-600 dark:border-gray-500"/>
-                                                <span className="truncate">{value}</span>
-                                            </label>
-                                        ))}
+                            ) : (
+                                <div className="grid grid-cols-2 gap-4">
+                                    <div>
+                                        <h4 className="text-sm font-semibold mb-2 dark:text-gray-300">Match These</h4>
+                                        <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Search values..." className="w-full px-2 py-1 border rounded-md text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white mb-2"/>
+                                        <div className="max-h-40 overflow-y-auto border rounded-md p-2 space-y-1 dark:border-gray-700">
+                                            {filteredUniqueValues.map(value => (
+                                                <label key={`include-${value}`} className="flex items-center text-sm hover:bg-gray-50 dark:hover:bg-gray-700 rounded p-1 dark:text-gray-300">
+                                                    <input type="checkbox" checked={checkedValues.has(value)} onChange={() => handleCheck(value, false)} className="mr-2 h-4 w-4 text-cyan-600 border-gray-300 rounded focus:ring-cyan-500 dark:bg-gray-600 dark:border-gray-500"/>
+                                                    <span className="truncate">{value}</span>
+                                                </label>
+                                            ))}
+                                        </div>
+                                    </div>
+                                    <div>
+                                        <h4 className="text-sm font-semibold mb-2 dark:text-gray-300">Do Not Match (NOT)</h4>
+                                        <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Search values..." className="w-full px-2 py-1 border rounded-md text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white mb-2"/>
+                                        <div className="max-h-40 overflow-y-auto border rounded-md p-2 space-y-1 dark:border-gray-700">
+                                            {filteredUniqueValues.map(value => (
+                                                <label key={`exclude-${value}`} className="flex items-center text-sm hover:bg-gray-50 dark:hover:bg-gray-700 rounded p-1 dark:text-gray-300">
+                                                    <input type="checkbox" checked={excludedValues.has(value)} onChange={() => handleCheck(value, true)} className="mr-2 h-4 w-4 text-red-600 border-gray-300 rounded focus:ring-red-500 dark:bg-gray-600 dark:border-gray-500"/>
+                                                    <span className="truncate">{value}</span>
+                                                </label>
+                                            ))}
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
+                            )}
                         </div>
 
                         <div className="mt-4 flex justify-between items-center">
@@ -1246,7 +1685,7 @@
             );
         }
 
-        function CustomerProfile({ customer, groupsMap, segmentsMap, onBack, onUpdateCustomAttribute, customAttrDefs }) {
+        function CustomerProfile({ customer, groupsMap, segmentsMap, onBack, onUpdateCustomAttribute, customAttrDefs, allOrders }) {
             const smsAttrKey = "square:3b8c48fb-dead-437e-b974-430466925699";
             
             const handleLogSms = () => {
@@ -1337,9 +1776,31 @@
                                     </div>
                                 )}
                             </InfoCard>
-
-                            <InfoCard title="Notes" className="md:col-span-3">
-                                <p className="text-gray-700 dark:text-gray-300 whitespace-pre-wrap">{customer.note || 'No notes for this customer.'}</p>
+                            <InfoCard title="Order History" className="md:col-span-3">
+                                <div className="max-h-60 overflow-y-auto">
+                                    {allOrders.filter(o => o.customer_id === customer.id).length > 0 ? (
+                                        <table className="w-full text-sm text-left">
+                                            <thead>
+                                                <tr className="bg-gray-50 dark:bg-gray-700">
+                                                    <th className="p-2">Line Item</th>
+                                                    <th className="p-2">Qty</th>
+                                                    <th className="p-2">Date</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {allOrders.filter(o => o.customer_id === customer.id).map((item) => (
+                                                    <tr key={item.item_uid} className="border-b dark:border-gray-700">
+                                                        <td className="p-2">{item.line_item_name}</td>
+                                                        <td className="p-2">{item.quantity}</td>
+                                                        <td className="p-2">{formatSimpleDate(item.purchase_date)}</td>
+                                                    </tr>
+                                                ))}
+                                            </tbody>
+                                        </table>
+                                    ) : (
+                                        <p className="text-gray-500 dark:text-gray-400">No orders found for this customer.</p>
+                                    )}
+                                </div>
                             </InfoCard>
                         </div>
                     </div>
