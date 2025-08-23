@@ -257,6 +257,16 @@
 
             const fetchAllOrders = useCallback(async (locationId) => {
                 setLoadingMessage('Fetching all orders...');
+                
+                // Create a map of customers by a combined first name and phone number for reliable matching
+                const customerMapByContact = new Map();
+                for (const customer of allCustomers) {
+                    if (customer.given_name && customer.phone_number) {
+                        const key = `${customer.given_name.toLowerCase().trim()}-${customer.phone_number.replace(/\D/g, '')}`;
+                        customerMapByContact.set(key, customer.id);
+                    }
+                }
+
                 let fetchedOrders = [];
                 let cursor = undefined;
                 do {
@@ -269,7 +279,21 @@
                     });
                     
                     if (data && data.orders) {
-                        fetchedOrders.push(...data.orders);
+                        // Iterate through orders to find a customer ID for online orders
+                        const ordersWithCustomerId = data.orders.map(order => {
+                            if (!order.customer_id && order.fulfillments?.[0]?.pickup_details?.recipient?.given_name && order.fulfillments?.[0]?.pickup_details?.recipient?.phone_number) {
+                                // This is a non-in-person order, let's try to match it
+                                const recipient = order.fulfillments[0].pickup_details.recipient;
+                                const key = `${recipient.given_name.toLowerCase().trim()}-${recipient.phone_number.replace(/\D/g, '')}`;
+                                const matchedCustomerId = customerMapByContact.get(key);
+                                if (matchedCustomerId) {
+                                    return { ...order, customer_id: matchedCustomerId };
+                                }
+                            }
+                            return order;
+                        });
+
+                        fetchedOrders.push(...ordersWithCustomerId);
                     }
                     cursor = data.cursor;
                     if (cursor) await delay(200); // Throttle requests
@@ -290,8 +314,9 @@
                 );
                 
                 setAllOrders(flattenedItems);
-            }, [squareAccessToken]);
+            }, [squareAccessToken, allCustomers]);
 
+            // This useEffect fetches initial non-order data
             useEffect(() => {
                 if (squareAccessToken) {
                     const fetchAllCustomAttributeDefinitions = async () => {
@@ -328,11 +353,7 @@
                             const activeLocation = locationData.locations?.find(loc => loc.status === 'ACTIVE');
                             if (activeLocation) {
                                 setLocationId(activeLocation.id);
-                                // Await both customer and order fetches
-                                await Promise.all([
-                                    fetchAllCustomers(),
-                                    fetchAllOrders(activeLocation.id)
-                                ]);
+                                await fetchAllCustomers(); // Fetch customers first
                             } else {
                                 throw new Error("No active location found for this business.");
                             }
@@ -355,8 +376,15 @@
                     
                     fetchInitialData();
                 }
-            }, [squareAccessToken, user, fetchAllCustomers, fetchAllOrders]);
+            }, [squareAccessToken, user, fetchAllCustomers]);
             
+            // This useEffect fetches order data once customers are loaded
+            useEffect(() => {
+                if (allCustomers.length > 0 && locationId) {
+                    fetchAllOrders(locationId);
+                }
+            }, [allCustomers, locationId, fetchAllOrders]);
+
             const handleUpdateCustomAttribute = async (customerId, attributeKey, value) => {
                 try {
                     const payload = {
