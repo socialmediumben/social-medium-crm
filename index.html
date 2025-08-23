@@ -264,13 +264,6 @@
                         method: 'POST',
                         body: JSON.stringify({
                             location_ids: [locationId],
-                            query: {
-                                filter: {
-                                    state_filter: { states: ["COMPLETED"] }
-                                },
-                                sort: { sort_field: "CLOSED_AT", sort_order: "DESC" }
-                            },
-                            limit: 100, // Fetch in batches
                             cursor: cursor
                         })
                     });
@@ -1463,12 +1456,12 @@
                                         </select>
                                         { dateMode === 'relative' ? (
                                             <div className="flex space-x-2">
-                                                <select name="period" value={excludedRelativePeriod} onChange={(e) => handleExcludedRelativeDateChange(e, 'excluded')} className="w-1/2 px-2 py-1 border rounded-md text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white">
+                                                <select name="period" value={excludedRelativePeriod} onChange={(e) => handleRelativeDateChange(e, 'excluded')} className="w-1/2 px-2 py-1 border rounded-md text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white">
                                                     <option value="">-</option>
                                                     <option value="This">This</option>
                                                     <option value="Last">Last</option>
                                                 </select>
-                                                <select name="unit" value={excludedRelativeUnit} onChange={(e) => handleExcludedRelativeDateChange(e, 'excluded')} className="w-1/2 px-2 py-1 border rounded-md text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white" disabled={!excludedRelativePeriod}>
+                                                <select name="unit" value={excludedRelativeUnit} onChange={(e) => handleRelativeDateChange(e, 'excluded')} className="w-1/2 px-2 py-1 border rounded-md text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white" disabled={!excludedRelativePeriod}>
                                                     <option value="">-</option>
                                                     <option value="Day">Day</option>
                                                     <option value="Week">Week</option>
