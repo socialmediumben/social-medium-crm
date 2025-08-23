@@ -70,7 +70,7 @@
         const getRelativeDateRange = (period) => {
             const today = new Date();
             today.setHours(0, 0, 0, 0);
-            const endDate = new Date(today);
+            let endDate = new Date(today);
             endDate.setHours(23, 59, 59, 999);
             let startDate = new Date(today);
             
@@ -103,18 +103,22 @@
                     endDate = lastWeekEnd;
                     endDate.setHours(23, 59, 59, 999);
                     break;
-                case 'Last Month':
-                    startDate = new Date(startDate.getFullYear(), startDate.getMonth() - 1, 1);
-                    const lastMonthEnd = new Date(startDate.getFullYear(), startDate.getMonth() + 1, 0);
-                    endDate = lastMonthEnd;
-                    endDate.setHours(23, 59, 59, 999);
+                case 'This Quarter':
+                    const currentMonth = today.getMonth();
+                    const currentQuarterStartMonth = Math.floor(currentMonth / 3) * 3;
+                    startDate = new Date(today.getFullYear(), currentQuarterStartMonth, 1);
+                    startDate.setHours(0, 0, 0, 0);
+                    const nextQuarterStartMonth = currentQuarterStartMonth + 3;
+                    const nextQuarterStart = new Date(today.getFullYear(), nextQuarterStartMonth, 1);
+                    endDate = new Date(nextQuarterStart.getTime() - 1);
                     break;
                 case 'Last Quarter':
-                    const currentMonth = startDate.getMonth();
-                    const quarter = Math.floor(currentMonth / 3);
-                    startDate = new Date(startDate.getFullYear(), quarter * 3 - 3, 1);
-                    const lastQuarterEnd = new Date(startDate.getFullYear(), quarter * 3, 0);
-                    endDate = lastQuarterEnd;
+                    const month = today.getMonth();
+                    const quarterStartMonth = Math.floor(month / 3) * 3;
+                    startDate = new Date(today.getFullYear(), quarterStartMonth - 3, 1);
+                    startDate.setHours(0, 0, 0, 0);
+                    const quarterEnd = new Date(today.getFullYear(), quarterStartMonth, 0);
+                    endDate = new Date(quarterEnd.getTime());
                     endDate.setHours(23, 59, 59, 999);
                     break;
                 case 'Last Year':
@@ -174,7 +178,6 @@
                     headers: { ...options.headers, 'x-square-access-token': squareAccessToken, 'Content-Type': 'application/json' },
                 });
                 const data = await response.json();
-                console.log('API Response:', data); // Add console.log here
                 if (!response.ok) throw new Error(data.errors?.[0]?.detail || data.error || 'An API error occurred.');
                 return data;
             };
@@ -271,8 +274,10 @@
                             cursor: cursor
                         })
                     });
-                    console.log('API Response:', data); // This will log the API response to the console
-                    if (data.orders) fetchedOrders.push(...data.orders);
+                    
+                    if (data && data.orders) {
+                        fetchedOrders.push(...data.orders);
+                    }
                     cursor = data.cursor;
                     if (cursor) await delay(200); // Throttle requests
                 } while (cursor);
@@ -1197,7 +1202,7 @@
                             </div>
                             <span className="text-gray-600 dark:text-gray-300 font-semibold">{filteredAndSortedData.length} {reportType === 'customer' ? 'Customers' : 'Items'}</span>
                         </div>
-                        <h2 className="4xl font-bold text-gray-800 dark:text-gray-200">Customer Report</h2>
+                        <h2 className="text-4xl font-bold text-gray-800 dark:text-gray-200">Customer Report</h2>
                         <div className="mt-8 bg-white dark:bg-gray-800 rounded-lg shadow overflow-x-auto">
                             <table className="w-full text-sm text-left text-gray-500 dark:text-gray-400">
                                 <thead className="text-xs text-gray-700 dark:text-gray-400 uppercase bg-gray-50 dark:bg-gray-700">
@@ -1233,8 +1238,8 @@
                                                         cellContent = row.line_item_name || 'N/A';
                                                     } else if (field.key === 'quantity') {
                                                         cellContent = row.quantity;
-                                                    } else if (field.key === 'purchase_date') {
-                                                        cellContent = formatSimpleDate(row.purchase_date);
+                                                    } else if (field.path.includes('purchase_date')) {
+                                                        cellContent = formatSimpleDate(getNestedValue(row, field.path));
                                                     } else {
                                                         cellContent = getNestedValue(row, field.path) || 'N/A';
                                                     }
@@ -1481,32 +1486,33 @@
                                     </div>
                                 </div>
                             ) : (
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div>
-                                        <h4 className="text-sm font-semibold mb-2 dark:text-gray-300">Match These</h4>
-                                        <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Search values..." className="w-full px-2 py-1 border rounded-md text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white mb-2"/>
-                                        <div className="max-h-40 overflow-y-auto border rounded-md p-2 space-y-1 dark:border-gray-700">
-                                            {filteredUniqueValues.map(value => (
-                                                <label key={`include-${value}`} className="flex items-center text-sm hover:bg-gray-50 dark:hover:bg-gray-700 rounded p-1 dark:text-gray-300">
-                                                    <input type="checkbox" checked={checkedValues.has(value)} onChange={() => handleCheck(value, false)} className="mr-2 h-4 w-4 text-cyan-600 border-gray-300 rounded focus:ring-cyan-500 dark:bg-gray-600 dark:border-gray-500"/>
-                                                    <span className="truncate">{value}</span>
-                                                </label>
-                                            ))}
+                                <>
+                                    <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Search values..." className="w-full px-2 py-1 border rounded-md text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white mb-2"/>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div>
+                                            <h4 className="text-sm font-semibold mb-2 dark:text-gray-300">Match These</h4>
+                                            <div className="max-h-40 overflow-y-auto border rounded-md p-2 space-y-1 dark:border-gray-700">
+                                                {filteredUniqueValues.map(value => (
+                                                    <label key={`include-${value}`} className="flex items-center text-sm hover:bg-gray-50 dark:hover:bg-gray-700 rounded p-1 dark:text-gray-300">
+                                                        <input type="checkbox" checked={checkedValues.has(value)} onChange={() => handleCheck(value, false)} className="mr-2 h-4 w-4 text-cyan-600 border-gray-300 rounded focus:ring-cyan-500 dark:bg-gray-600 dark:border-gray-500"/>
+                                                        <span className="truncate">{value}</span>
+                                                    </label>
+                                                ))}
+                                            </div>
+                                        </div>
+                                        <div>
+                                            <h4 className="text-sm font-semibold mb-2 dark:text-gray-300">Do Not Match (NOT)</h4>
+                                            <div className="max-h-40 overflow-y-auto border rounded-md p-2 space-y-1 dark:border-gray-700">
+                                                {filteredUniqueValues.map(value => (
+                                                    <label key={`exclude-${value}`} className="flex items-center text-sm hover:bg-gray-50 dark:hover:bg-gray-700 rounded p-1 dark:text-gray-300">
+                                                        <input type="checkbox" checked={excludedValues.has(value)} onChange={() => handleCheck(value, true)} className="mr-2 h-4 w-4 text-red-600 border-gray-300 rounded focus:ring-red-500 dark:bg-gray-600 dark:border-gray-500"/>
+                                                        <span className="truncate">{value}</span>
+                                                    </label>
+                                                ))}
+                                            </div>
                                         </div>
                                     </div>
-                                    <div>
-                                        <h4 className="text-sm font-semibold mb-2 dark:text-gray-300">Do Not Match (NOT)</h4>
-                                        <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Search values..." className="w-full px-2 py-1 border rounded-md text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white mb-2"/>
-                                        <div className="max-h-40 overflow-y-auto border rounded-md p-2 space-y-1 dark:border-gray-700">
-                                            {filteredUniqueValues.map(value => (
-                                                <label key={`exclude-${value}`} className="flex items-center text-sm hover:bg-gray-50 dark:hover:bg-gray-700 rounded p-1 dark:text-gray-300">
-                                                    <input type="checkbox" checked={excludedValues.has(value)} onChange={() => handleCheck(value, true)} className="mr-2 h-4 w-4 text-red-600 border-gray-300 rounded focus:ring-red-500 dark:bg-gray-600 dark:border-gray-500"/>
-                                                    <span className="truncate">{value}</span>
-                                                </label>
-                                            ))}
-                                        </div>
-                                    </div>
-                                </div>
+                                </>
                             )}
                         </div>
 
@@ -1665,7 +1671,6 @@
                         <div className="mt-6 flex justify-end space-x-2">
                             <button onClick={onCancel} className="px-4 py-2 bg-gray-200 dark:bg-gray-600 dark:text-white rounded-md">Cancel</button>
                             <button onClick={handleApply} className="px-4 py-2 bg-cyan-600 text-white rounded-md text-sm">OK</button>
-                            {error && <p className="text-red-500 text-sm text-center">{error}</p>}
                         </div>
                     </div>
                 </div>
