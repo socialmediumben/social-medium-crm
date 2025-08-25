@@ -140,6 +140,7 @@
             const [loadingMessage, setLoadingMessage] = useState('');
             const [error, setError] = useState('');
             const [theme, setTheme] = useState(localStorage.getItem('theme') || 'light');
+            const [isAdmin, setIsAdmin] = useState(false); // New state for admin status
             
             // Data stores
             const [allCustomers, setAllCustomers] = useState([]);
@@ -150,6 +151,8 @@
             const [locationId, setLocationId] = useState(null);
             const [personalReports, setPersonalReports] = useState([]);
             const [publicReports, setPublicReports] = useState([]);
+            const [checklist, setChecklist] = useState([]);
+            const [allUsers, setAllUsers] = useState([]); // New state for all users
             
             // View management
             const [currentView, setCurrentView] = useState('dashboard');
@@ -186,6 +189,20 @@
                 const unsubscribe = auth.onAuthStateChanged(user => {
                     setUser(user);
                     setAuthLoading(false);
+                    // Fetch user details including admin status
+                    if (user) {
+                        const userDocRef = db.collection('users').doc(user.uid);
+                        userDocRef.get().then(doc => {
+                            if (doc.exists) {
+                                const data = doc.data();
+                                setIsAdmin(data.isAdmin || false);
+                            } else {
+                                // If the user doc doesn't exist, create it with isAdmin: false
+                                userDocRef.set({ email: user.email, isAdmin: false, squareAccessToken: null, savedReports: [] });
+                                setIsAdmin(false);
+                            }
+                        });
+                    }
                 });
                 return () => unsubscribe();
             }, []);
@@ -227,13 +244,73 @@
                             setPublicReports(deserializeReports(doc.data().allReports));
                         }
                     });
+                    
+                    // New subscription to all users for admin view
+                    const allUsersUnsubscribe = db.collection('users').onSnapshot(snapshot => {
+                        const users = snapshot.docs.map(doc => ({
+                            id: doc.id,
+                            ...doc.data()
+                        }));
+                        setAllUsers(users);
+                    });
+
 
                     return () => {
                         unsubscribeUser();
                         unsubscribePublic();
+                        allUsersUnsubscribe();
                     };
                 }
             }, [user]);
+
+            // New useEffect to handle checklist data
+            useEffect(() => {
+                if (user) {
+                    let query;
+                    if (isAdmin) {
+                        // Admins can see all checklists using a collection group query
+                        query = db.collectionGroup('checklists').orderBy('createdAt', 'asc');
+                    } else {
+                        // Regular users only see their own checklist
+                        query = db.collection('users').doc(user.uid).collection('checklists').orderBy('createdAt', 'asc');
+                    }
+                    
+                    const unsubscribe = query.onSnapshot(snapshot => {
+                        const items = snapshot.docs.map(doc => ({
+                            id: doc.id,
+                            userId: doc.ref.parent.parent.id, // Get the user ID from the parent document
+                            ...doc.data()
+                        }));
+                        setChecklist(items);
+                    });
+                    return () => unsubscribe();
+                }
+            }, [user, isAdmin]);
+
+            const handleAddChecklistItem = async (text) => {
+                if (user && text.trim() !== '') {
+                    const checklistCollectionRef = db.collection('users').doc(user.uid).collection('checklists');
+                    await checklistCollectionRef.add({
+                        text,
+                        completed: false,
+                        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                    });
+                }
+            };
+
+            const handleUpdateChecklistItem = async (id, completed) => {
+                if (user) {
+                    const itemRef = db.collection('users').doc(user.uid).collection('checklists').doc(id);
+                    await itemRef.update({ completed });
+                }
+            };
+
+            const handleDeleteChecklistItem = async (id) => {
+                if (user) {
+                    const itemRef = db.collection('users').doc(user.uid).collection('checklists').doc(id);
+                    await itemRef.delete();
+                }
+            };
 
             const fetchAllCustomers = useCallback(async () => {
                 setLoadingMessage('Fetching all customers...');
@@ -621,6 +698,10 @@
                         return <ReportsPage allCustomers={allCustomers} allOrders={allOrders} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} onSelectCustomer={handleSelectCustomer} onBack={() => setCurrentView('dashboard')} savedReports={combinedReports} onSaveReport={handleSaveReport} onUpdateReport={handleUpdateReport} onDeleteReport={handleDeleteReport} initialReport={reportToLoad} onInitialReportLoaded={() => setReportToLoad(null)} totalCustomers={allCustomers.length} />;
                     case 'directory':
                         return <DirectoryPage allCustomers={allCustomers} onSelectCustomer={handleSelectCustomer} onBack={() => setCurrentView('dashboard')} />;
+                    case 'checklist':
+                        return <ChecklistPage checklist={checklist} onAdd={handleAddChecklistItem} onUpdate={handleUpdateChecklistItem} onDelete={handleDeleteChecklistItem} onBack={() => setCurrentView('dashboard')} isAdmin={isAdmin} allUsers={allUsers} />;
+                    case 'admin':
+                        return <AdminPage allUsers={allUsers} onBack={() => setCurrentView('dashboard')} />;
                     case 'dashboard':
                     default:
                         return <Dashboard onNavigate={handleNavigate} widgets={widgets} allCustomers={allCustomers} allOrders={allOrders} groupsMap={groupsMap} segmentsMap={segmentsMap} onSelectCustomer={handleSelectCustomer} totalCustomers={allCustomers.length} />;
@@ -629,7 +710,7 @@
 
             return (
                 <div className="h-screen flex flex-col">
-                    <Toolbar onNavigate={handleNavigate} theme={theme} toggleTheme={toggleTheme} />
+                    <Toolbar onNavigate={handleNavigate} theme={theme} toggleTheme={toggleTheme} isAdmin={isAdmin} />
                     <main className="flex-1 overflow-y-auto bg-gray-100 dark:bg-gray-800">
                         {renderMainContent()}
                     </main>
@@ -639,7 +720,7 @@
 
         // --- Child Components ---
 
-        function Toolbar({ onNavigate, theme, toggleTheme }) {
+        function Toolbar({ onNavigate, theme, toggleTheme, isAdmin }) {
             const handleRefresh = () => window.location.reload();
             return (
                 <header className="bg-white dark:bg-gray-900 shadow-md p-4 flex justify-between items-center z-20">
@@ -652,6 +733,8 @@
                             }
                         </button>
                         <button onClick={() => onNavigate('dashboard')} className="text-sm font-medium text-gray-600 dark:text-gray-300 hover:text-cyan-600 dark:hover:text-cyan-400">Dashboard</button>
+                        <button onClick={() => onNavigate('checklist')} className="text-sm font-medium text-gray-600 dark:text-gray-300 hover:text-cyan-600 dark:hover:text-cyan-400">Checklist</button>
+                        {isAdmin && <button onClick={() => onNavigate('admin')} className="text-sm font-medium text-gray-600 dark:text-gray-300 hover:text-cyan-600 dark:hover:text-cyan-400">Admin</button>}
                         <button onClick={handleRefresh} className="text-sm font-medium text-gray-600 dark:text-gray-300 hover:text-cyan-600 dark:hover:text-cyan-400">Refresh</button>
                         <button onClick={() => auth.signOut()} className="px-4 py-2 bg-cyan-600 text-white rounded-md text-sm font-medium hover:bg-cyan-700">Logout</button>
                     </div>
@@ -1712,6 +1795,125 @@
                 </div>
             );
         }
+        
+        function AdminPage({ allUsers, onBack }) {
+            const [searchTerm, setSearchTerm] = useState('');
+            
+            // Filter users based on search term
+            const filteredUsers = useMemo(() => {
+                const lowercasedTerm = searchTerm.toLowerCase();
+                if (!lowercasedTerm) return allUsers;
+                return allUsers.filter(user => 
+                    (user.email && user.email.toLowerCase().includes(lowercasedTerm)) ||
+                    (user.uid && user.uid.toLowerCase().includes(lowercasedTerm))
+                );
+            }, [searchTerm, allUsers]);
+
+            const handleDeleteUser = (userId) => {
+                // IMPORTANT: In a production app, you would not delete users from the client.
+                // You would trigger a Firebase Cloud Function to handle the deletion securely on the server.
+                // This prevents exposing any administrator credentials and ensures all associated data (like their
+                // user document, private checklists, etc.) are deleted cleanly.
+                console.log(`[ACTION] Attempting to delete user with ID: ${userId}`);
+                console.log("This action should be handled by a secure Firebase Cloud Function.");
+                alert(`The user deletion for ${userId} would be handled by a secure backend function.`);
+            };
+
+            return (
+                <div className="p-8">
+                    <button onClick={onBack} className="mb-6 text-cyan-600 dark:text-cyan-400 hover:text-cyan-800 dark:hover:text-cyan-200"> &larr; Back to Dashboard</button>
+                    <h2 className="text-4xl font-bold text-gray-800 dark:text-gray-200">Admin Panel</h2>
+                    <p className="text-gray-500 dark:text-gray-400 mt-2">Manage user accounts and data.</p>
+                    
+                    <div className="mt-4">
+                        <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Filter users by email or ID..." className="w-full max-w-lg px-4 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"/>
+                    </div>
+                    
+                    <div className="mt-8 bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
+                        <ul className="divide-y divide-gray-200 dark:divide-gray-700">
+                            {filteredUsers.map(user => (
+                                <li key={user.id} className="w-full p-4 hover:bg-gray-50 dark:hover:bg-gray-700 flex justify-between items-center">
+                                    <div>
+                                        <p className="font-semibold text-gray-800 dark:text-gray-200">{user.email || 'No Email'}</p>
+                                        <p className="text-sm text-gray-500 dark:text-gray-400">UID: {user.id}</p>
+                                        <p className="text-sm text-gray-500 dark:text-gray-400">Admin: {user.isAdmin ? 'Yes' : 'No'}</p>
+                                    </div>
+                                    <button onClick={() => handleDeleteUser(user.id)} className="px-4 py-2 bg-red-600 text-white rounded-md text-sm hover:bg-red-700">
+                                        Delete User
+                                    </button>
+                                </li>
+                            ))}
+                        </ul>
+                    </div>
+                </div>
+            );
+        }
+
+        function ChecklistPage({ checklist, onAdd, onUpdate, onDelete, onBack, isAdmin, allUsers }) {
+            const [newItemText, setNewItemText] = useState('');
+            
+            // Create a map of user IDs to emails for display
+            const userEmailsMap = useMemo(() => {
+                const map = new Map();
+                allUsers.forEach(user => {
+                    map.set(user.id, user.email || 'No Email');
+                });
+                return map;
+            }, [allUsers]);
+
+            const handleAddItem = (e) => {
+                e.preventDefault();
+                onAdd(newItemText);
+                setNewItemText('');
+            };
+
+            return (
+                <div className="p-8">
+                    <button onClick={onBack} className="mb-6 text-cyan-600 dark:text-cyan-400 hover:text-cyan-800 dark:hover:text-cyan-200"> &larr; Back to Dashboard</button>
+                    <h2 className="text-4xl font-bold text-gray-800 dark:text-gray-200">{isAdmin ? 'All Checklists' : 'My Checklist'}</h2>
+                    <p className="text-gray-500 dark:text-gray-400 mt-2">{isAdmin ? 'View and manage all user checklists.' : 'Personal tasks and reminders.'}</p>
+                    
+                    {!isAdmin && (
+                        <div className="mt-8 bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+                            <form onSubmit={handleAddItem} className="flex space-x-2 mb-6">
+                                <input 
+                                    type="text"
+                                    value={newItemText}
+                                    onChange={(e) => setNewItemText(e.target.value)}
+                                    placeholder="Add a new item..."
+                                    className="flex-grow px-4 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                                />
+                                <button type="submit" className="px-4 py-2 bg-cyan-600 text-white rounded-md hover:bg-cyan-700">Add</button>
+                            </form>
+                        </div>
+                    )}
+
+                    <div className="mt-8 bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+                        <ul className="space-y-4">
+                            {checklist.length === 0 && <p className="text-gray-500 text-center dark:text-gray-400">No items on your checklist.</p>}
+                            {checklist.map(item => (
+                                <li key={item.id} className="flex items-center space-x-3 group">
+                                    <input 
+                                        type="checkbox" 
+                                        checked={item.completed} 
+                                        onChange={(e) => onUpdate(item.id, e.target.checked)}
+                                        className="h-5 w-5 text-cyan-600 border-gray-300 rounded focus:ring-cyan-500 dark:bg-gray-600 dark:border-gray-500"
+                                    />
+                                    <span className={`flex-grow dark:text-gray-200 ${item.completed ? 'line-through text-gray-400 dark:text-gray-500' : ''}`}>
+                                        {item.text}
+                                    </span>
+                                    {isAdmin && <span className="text-xs text-gray-500 dark:text-gray-400 mr-2">({userEmailsMap.get(item.userId)})</span>}
+                                    <button onClick={() => onDelete(item.id)} className="text-red-500 hover:text-red-700 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm6 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clipRule="evenodd" /></svg>
+                                    </button>
+                                </li>
+                            ))}
+                        </ul>
+                    </div>
+                </div>
+            );
+        }
+
 
         function CustomerProfile({ customer, groupsMap, segmentsMap, onBack, onUpdateCustomAttribute, customAttrDefs, allOrders }) {
             const smsAttrKey = "square:3b8c48fb-dead-437e-b974-430466925699";
