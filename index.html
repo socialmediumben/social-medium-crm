@@ -265,27 +265,27 @@
 
             // New useEffect to handle checklist data
             useEffect(() => {
-                if (user) {
-                    let query;
-                    if (isAdmin) {
-                        // Admins can see all checklists using a collection group query
-                        query = db.collectionGroup('checklists').orderBy('createdAt', 'asc');
-                    } else {
-                        // Regular users only see their own checklist
-                        query = db.collection('users').doc(user.uid).collection('checklists').orderBy('createdAt', 'asc');
-                    }
-                    
-                    const unsubscribe = query.onSnapshot(snapshot => {
-                        const items = snapshot.docs.map(doc => ({
-                            id: doc.id,
-                            userId: doc.ref.parent.parent.id, // Get the user ID from the parent document
-                            ...doc.data()
-                        }));
-                        setChecklist(items);
-                    });
-                    return () => unsubscribe();
+                if (!user || authLoading) return; // Wait for user to be authenticated and auth loading to complete
+
+                let query;
+                if (isAdmin) {
+                    // Admins can see all checklists using a collection group query
+                    query = db.collectionGroup('checklists').orderBy('createdAt', 'asc');
+                } else {
+                    // Regular users only see their own checklist
+                    query = db.collection('users').doc(user.uid).collection('checklists').orderBy('createdAt', 'asc');
                 }
-            }, [user, isAdmin]);
+                
+                const unsubscribe = query.onSnapshot(snapshot => {
+                    const items = snapshot.docs.map(doc => ({
+                        id: doc.id,
+                        userId: doc.ref.parent.parent.id, // Get the user ID from the parent document
+                        ...doc.data()
+                    }));
+                    setChecklist(items);
+                });
+                return () => unsubscribe();
+            }, [user, isAdmin, authLoading]); // Added authLoading to dependencies
 
             const handleAddChecklistItem = async (text) => {
                 if (user && text.trim() !== '') {
@@ -297,17 +297,19 @@
                     });
                 }
             };
-
-            const handleUpdateChecklistItem = async (id, completed) => {
+            
+            const handleUpdateChecklistItem = async (userId, itemId, completed) => {
                 if (user) {
-                    const itemRef = db.collection('users').doc(user.uid).collection('checklists').doc(id);
+                    // Admins can update any item, regular users can only update their own
+                    const itemRef = db.collection('users').doc(userId).collection('checklists').doc(itemId);
                     await itemRef.update({ completed });
                 }
             };
-
-            const handleDeleteChecklistItem = async (id) => {
+            
+            const handleDeleteChecklistItem = async (userId, itemId) => {
                 if (user) {
-                    const itemRef = db.collection('users').doc(user.uid).collection('checklists').doc(id);
+                    // Admins can delete any item, regular users can only delete their own
+                    const itemRef = db.collection('users').doc(userId).collection('checklists').doc(itemId);
                     await itemRef.delete();
                 }
             };
@@ -1873,22 +1875,18 @@
                     <h2 className="text-4xl font-bold text-gray-800 dark:text-gray-200">{isAdmin ? 'All Checklists' : 'My Checklist'}</h2>
                     <p className="text-gray-500 dark:text-gray-400 mt-2">{isAdmin ? 'View and manage all user checklists.' : 'Personal tasks and reminders.'}</p>
                     
-                    {!isAdmin && (
-                        <div className="mt-8 bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-                            <form onSubmit={handleAddItem} className="flex space-x-2 mb-6">
-                                <input 
-                                    type="text"
-                                    value={newItemText}
-                                    onChange={(e) => setNewItemText(e.target.value)}
-                                    placeholder="Add a new item..."
-                                    className="flex-grow px-4 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                                />
-                                <button type="submit" className="px-4 py-2 bg-cyan-600 text-white rounded-md hover:bg-cyan-700">Add</button>
-                            </form>
-                        </div>
-                    )}
-
                     <div className="mt-8 bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+                        <form onSubmit={handleAddItem} className="flex space-x-2 mb-6">
+                            <input 
+                                type="text"
+                                value={newItemText}
+                                onChange={(e) => setNewItemText(e.target.value)}
+                                placeholder="Add a new item..."
+                                className="flex-grow px-4 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                            />
+                            <button type="submit" className="px-4 py-2 bg-cyan-600 text-white rounded-md hover:bg-cyan-700">Add</button>
+                        </form>
+                        
                         <ul className="space-y-4">
                             {checklist.length === 0 && <p className="text-gray-500 text-center dark:text-gray-400">No items on your checklist.</p>}
                             {checklist.map(item => (
@@ -1896,14 +1894,14 @@
                                     <input 
                                         type="checkbox" 
                                         checked={item.completed} 
-                                        onChange={(e) => onUpdate(item.id, e.target.checked)}
+                                        onChange={(e) => onUpdate(item.userId, item.id, e.target.checked)}
                                         className="h-5 w-5 text-cyan-600 border-gray-300 rounded focus:ring-cyan-500 dark:bg-gray-600 dark:border-gray-500"
                                     />
                                     <span className={`flex-grow dark:text-gray-200 ${item.completed ? 'line-through text-gray-400 dark:text-gray-500' : ''}`}>
                                         {item.text}
                                     </span>
                                     {isAdmin && <span className="text-xs text-gray-500 dark:text-gray-400 mr-2">({userEmailsMap.get(item.userId)})</span>}
-                                    <button onClick={() => onDelete(item.id)} className="text-red-500 hover:text-red-700 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <button onClick={() => onDelete(item.userId, item.id)} className="text-red-500 hover:text-red-700 opacity-0 group-hover:opacity-100 transition-opacity">
                                         <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm6 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clipRule="evenodd" /></svg>
                                     </button>
                                 </li>
