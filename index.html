@@ -985,6 +985,14 @@
                 });
             }, [widget, allCustomers, allOrders, groupsMap, segmentsMap]);
 
+            const countToDisplay = useMemo(() => {
+                if (widget.reportType === 'customer') {
+                    return filteredData.length;
+                } else { // 'item' report type
+                    return filteredData.length;
+                }
+            }, [filteredData, widget.reportType]);
+
             const customerCount = useMemo(() => {
                 if (widget.reportType === 'customer') {
                     return filteredData.length;
@@ -993,7 +1001,7 @@
                     return uniqueCustomerIds.size;
                 }
             }, [filteredData, widget.reportType]);
-
+            
             const totalCount = widget.reportType === 'customer' ? allCustomers.length : allOrders.length;
             const percentage = totalCount > 0 ? (customerCount / totalCount * 100).toFixed(1) : 0;
             
@@ -1001,7 +1009,7 @@
             let textColor = 'text-cyan-600 dark:text-cyan-400';
 
             if (widget.targetMin && widget.targetMax) {
-                const count = customerCount;
+                const count = countToDisplay;
                 let min = widget.targetMin;
                 let max = widget.targetMax;
 
@@ -1040,7 +1048,7 @@
 
             const getTargetDifference = () => {
                 if (widget.targetMin && widget.targetMax) {
-                    const count = customerCount;
+                    const count = countToDisplay;
                     
                     if (widget.targetType === 'percentage') {
                         const total = widget.reportType === 'customer' ? allCustomers.length : allOrders.length;
@@ -1072,8 +1080,8 @@
                     <h3 className="text-xl font-semibold text-gray-800 dark:text-gray-200">{widget.name}</h3>
                     <div className="flex justify-between items-end mt-4">
                         <div>
-                            <p className={`text-5xl font-bold ${textColor}`}>{customerCount}</p>
-                            <p className="text-gray-500 dark:text-gray-400">{widget.reportType === 'customer' ? `Customers (${percentage}%)` : `Customers`}</p>
+                            <p className={`text-5xl font-bold ${textColor}`}>{countToDisplay}</p>
+                            <p className="text-gray-500 dark:text-gray-400">{widget.reportType === 'customer' ? `Customers (${percentage}%)` : `Items`}</p>
                         </div>
                         {targetDifference !== null && (
                             <div className={`flex items-center text-lg font-semibold ${textColor}`}>
@@ -1485,14 +1493,14 @@
                         // Special handling for item report customer fields
                         if (row.customer && Object.keys(row.customer).length > 0) {
                             value = getNestedValue(row, field.path);
-                            values.add((value || 'N/A').toString());
+                            if (value) values.add(value.toString());
                         }
                     } else {
                         value = getNestedValue(row, field.path);
                         if (isDateField) {
                             value = formatSimpleDate(value);
                         }
-                        values.add((value || 'N/A').toString());
+                        if (value) values.add(value.toString());
                     }
                 });
                 return Array.from(values).sort((a,b) => String(a).localeCompare(String(b), undefined, {numeric: true}));
@@ -1865,7 +1873,7 @@
                         </label>
                         <div className="mt-6 flex justify-end space-x-2">
                             <button onClick={onCancel} className="px-4 py-2 bg-gray-200 dark:bg-gray-600 dark:text-white rounded-md">Cancel</button>
-                            <button onClick={handleApply} className="px-4 py-2 bg-cyan-600 text-white rounded-md text-sm">OK</button>
+                            <button onClick={() => onSave(name, isWidget, isShared, targetMin, targetMax, targetType, reverseRange)} className="px-4 py-2 bg-cyan-600 text-white rounded-md text-sm">OK</button>
                         </div>
                     </div>
                 </div>
