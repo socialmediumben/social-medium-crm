@@ -506,6 +506,56 @@
                 }
             };
             
+            const handleLogContact = async (customerId) => {
+                if (!locationId) {
+                    setError("Location ID is not set. Cannot log contact.");
+                    return;
+                }
+                
+                // The item ID for "Contacted (Martin)"
+                const contactedMartinItemId = "376G3V4PU6H6VE6MEREUY3TD";
+
+                const orderPayload = {
+                    idempotency_key: crypto.randomUUID(),
+                    order: {
+                        location_id: locationId,
+                        customer_id: customerId,
+                        line_items: [{
+                            catalog_object_id: contactedMartinItemId,
+                            quantity: '1'
+                        }]
+                    }
+                };
+
+                try {
+                    // Create the order
+                    const orderData = await apiFetch('/v2/orders', {
+                        method: 'POST',
+                        body: JSON.stringify(orderPayload)
+                    });
+
+                    // Pay for the order (since it's a zero-dollar item)
+                    const payPayload = {
+                        idempotency_key: crypto.randomUUID(),
+                        payment_ids: []
+                    };
+                    await apiFetch(`/v2/orders/${orderData.order.id}/pay`, {
+                        method: 'POST',
+                        body: JSON.stringify(payPayload)
+                    });
+
+                    // Add a small delay to ensure the new order is available
+                    await delay(1000);
+
+                    // Re-fetch customer details to update the 'Last SMS Contact' field
+                    handleSelectCustomer(selectedCustomer);
+
+                } catch (err) {
+                    console.error("Failed to log contact:", err);
+                    setError("Could not log contact. Please try again.");
+                }
+            };
+
             const handleSelectCustomer = (customer) => {
                 setIsLoading(true);
                 setSelectedCustomer(customer);
@@ -513,6 +563,9 @@
                 setCurrentView('profile');
                 setLoadingMessage('Fetching customer details...');
                 setError('');
+                
+                // Define the item ID for 'Contacted (Martin)'
+                const contactedMartinItemId = "376G3V4PU6H6VE6MEREUY3TD";
 
                 const fetchDetails = async () => {
                     if (!locationId) {
@@ -527,6 +580,7 @@
                             apiFetch(`/v2/customers/${customer.id}/custom-attributes`)
                         ]);
                         
+                        // Fetch orders for the specific customer, sorted by creation date descending
                         const customerOrdersData = await apiFetch('/v2/orders/search', {
                                 method: 'POST',
                                 body: JSON.stringify({
@@ -540,11 +594,26 @@
                                     }
                                 })
                             });
+                        
+                        let lastSmsContactDate = null;
+                        const allOrders = customerOrdersData.orders || [];
+                        
+                        // Find the most recent 'Contacted (Martin)' order
+                        for (const order of allOrders) {
+                            if (order.line_items) {
+                                const contactItem = order.line_items.find(item => item.catalog_object_id === contactedMartinItemId);
+                                if (contactItem) {
+                                    lastSmsContactDate = order.closed_at;
+                                    break; // Found the most recent one, so we can stop
+                                }
+                            }
+                        }
 
                         const fullCustomerProfile = { 
                             ...customerData.customer, 
-                            orders: customerOrdersData.orders || [], // Add the full order history
-                            last_visit: customerOrdersData.orders?.[0]?.closed_at,
+                            orders: allOrders,
+                            last_visit: allOrders?.[0]?.closed_at,
+                            last_sms_contact: lastSmsContactDate,
                             custom_attributes: (customAttributesData.custom_attributes || []).reduce((acc, attr) => {
                                 acc[attr.key] = attr;
                                 return acc;
@@ -695,7 +764,7 @@
 
                 switch(currentView) {
                     case 'profile':
-                        return customerDetails ? <CustomerProfile customer={customerDetails} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} onBack={() => setCurrentView('directory')} onUpdateCustomAttribute={handleUpdateCustomAttribute} allOrders={allOrders} /> : <div className="flex justify-center items-center h-full"><div className="spinner"></div></div>;
+                        return customerDetails ? <CustomerProfile customer={customerDetails} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} onBack={() => setCurrentView('directory')} onLogContact={handleLogContact} /> : <div className="flex justify-center items-center h-full"><div className="spinner"></div></div>;
                     case 'reports':
                         return <ReportsPage allCustomers={allCustomers} allOrders={allOrders} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} onSelectCustomer={handleSelectCustomer} onBack={() => setCurrentView('dashboard')} savedReports={combinedReports} onSaveReport={handleSaveReport} onUpdateReport={handleUpdateReport} onDeleteReport={handleDeleteReport} initialReport={reportToLoad} onInitialReportLoaded={() => setReportToLoad(null)} totalCustomers={allCustomers.length} />;
                     case 'directory':
@@ -1913,41 +1982,33 @@
         }
 
 
-        function CustomerProfile({ customer, groupsMap, segmentsMap, onBack, onUpdateCustomAttribute, customAttrDefs, allOrders }) {
-            const smsAttrKey = "square:3b8c48fb-dead-437e-b974-430466925699";
+        function CustomerProfile({ customer, groupsMap, segmentsMap, onBack, onLogContact, customAttrDefs }) {
             
-            const handleLogSms = () => {
-                const today = new Date().toISOString().split('T')[0];
-                onUpdateCustomAttribute(customer.id, smsAttrKey, today);
-            };
-
             const formatAddress = (address) => {
                 if (!address) return 'N/A';
                 const parts = [ address.address_line_1, address.address_line_2, `${address.locality || ''} ${address.administrative_district_level_1 || ''} ${address.postal_code || ''}`.trim(), address.country ];
                 return parts.filter(Boolean).join(', ');
             };
+            
+            // The last_sms_contact property is now set in the parent component
+            const lastSmsContact = customer.last_sms_contact;
 
-            const lastSmsContact = getNestedValue(customer, ['custom_attributes', smsAttrKey, 'value']);
-
+            // Note: The custom attributes for 'Last SMS Contact' are no longer used.
             // Organize custom attributes for display
             const booleanAttributes = { true: [], false: [] };
             const otherAttributes = [];
-
-            Array.from(customAttrDefs.values()).forEach(def => {
-                if (def.key === smsAttrKey) return; // Already handled in Stats
-                
-                const attr = customer.custom_attributes?.[def.key];
+            Array.from(customer.custom_attributes ? Object.values(customer.custom_attributes) : []).forEach(attr => {
+                const def = customAttrDefs.get(attr.key);
+                if (!def) return;
                 
                 if (def.schema.$ref.includes('Boolean')) {
-                    if (attr && attr.value === true) {
+                    if (attr.value === true) {
                         booleanAttributes.true.push(def.name);
                     } else {
                         booleanAttributes.false.push(def.name);
                     }
                 } else {
-                    if (attr) {
-                        otherAttributes.push({ label: def.name, value: attr.value });
-                    }
+                    otherAttributes.push({ label: def.name, value: attr.value });
                 }
             });
 
@@ -1969,7 +2030,7 @@
                             <InfoCard title="Stats">
                                 <InfoItem label="Last Visit" value={customer.last_visit ? formatDetailedDate(customer.last_visit) : 'No visits found'} />
                                 <InfoItem label="Last SMS Contact" value={lastSmsContact ? formatSimpleDate(lastSmsContact) : 'N/A'} />
-                                <button onClick={handleLogSms} className="mt-2 w-full px-4 py-2 bg-cyan-600 text-white rounded-md shadow-sm hover:bg-cyan-700">Log SMS Sent Today</button>
+                                <button onClick={() => onLogContact(customer.id)} className="mt-2 w-full px-4 py-2 bg-cyan-600 text-white rounded-md shadow-sm hover:bg-cyan-700">Log Contact</button>
                             </InfoCard>
                             <InfoCard title="Details">
                                 <InfoItem label="Birthday" value={customer.birthday ? formatSimpleDate(customer.birthday) : 'N/A'} />
@@ -2006,7 +2067,7 @@
                             </InfoCard>
                             <InfoCard title="Order History" className="md:col-span-3">
                                 <div className="max-h-60 overflow-y-auto">
-                                    {allOrders.filter(o => o.customer_id === customer.id).length > 0 ? (
+                                    {customer.orders && customer.orders.length > 0 ? (
                                         <table className="w-full text-sm text-left">
                                             <thead>
                                                 <tr className="bg-gray-50 dark:bg-gray-700">
@@ -2016,13 +2077,15 @@
                                                 </tr>
                                             </thead>
                                             <tbody>
-                                                {allOrders.filter(o => o.customer_id === customer.id).map((item) => (
-                                                    <tr key={item.item_uid} className="border-b dark:border-gray-700">
-                                                        <td className="p-2">{item.line_item_name}</td>
-                                                        <td className="p-2">{item.quantity}</td>
-                                                        <td className="p-2">{formatSimpleDate(item.purchase_date)}</td>
-                                                    </tr>
-                                                ))}
+                                                {customer.orders.flatMap((order) => 
+                                                    (order.line_items || []).map((item) => (
+                                                        <tr key={`${order.id}-${item.uid}`} className="border-b dark:border-gray-700">
+                                                            <td className="p-2">{item.name}</td>
+                                                            <td className="p-2">{item.quantity}</td>
+                                                            <td className="p-2">{formatSimpleDate(order.closed_at)}</td>
+                                                        </tr>
+                                                    ))
+                                                )}
                                             </tbody>
                                         </table>
                                     ) : (
