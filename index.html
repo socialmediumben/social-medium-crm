@@ -1127,6 +1127,7 @@
         function ReportsPage({ allCustomers, allOrders, groupsMap, segmentsMap, customAttrDefs, onSelectCustomer, onBack, savedReports, onSaveReport, onUpdateReport, onDeleteReport, initialReport, onInitialReportLoaded, totalCustomers }) {
             const getCustomerReportFields = useCallback(() => {
                 const standardFields = [
+                    { key: 'customer_id', label: 'Customer ID', visible: false, path: ['id'] },
                     { key: 'given_name', label: 'First Name', visible: true, path: ['given_name'] },
                     { key: 'family_name', label: 'Last Name', visible: true, path: ['family_name'] },
                     { key: 'email_address', label: 'Email', visible: true, path: ['email_address'] },
@@ -1134,16 +1135,17 @@
                     { key: 'created_at', label: 'Customer Since', visible: true, path: ['created_at'] },
                     { key: 'groups', label: 'Groups & Segments', visible: true, path: [] },
                 ];
-                const customFields = Array.from(customAttrDefs.values()).map(def => ({
-                    key: def.key, label: def.name, visible: false, isCustom: true, path: ['custom_attributes', def.key, 'value']
-                }));
-                return [...standardFields, ...customFields];
-            }, [customAttrDefs]);
+                // Remove custom fields from this list
+                return [...standardFields];
+            }, []);
 
             const getItemReportFields = useCallback(() => {
                 return [
+                    { key: 'customer_id', label: 'Customer ID', visible: false, path: ['customer_id'] },
                     { key: 'given_name', label: 'First Name', visible: true, path: ['customer', 'given_name'] },
                     { key: 'family_name', label: 'Last Name', visible: true, path: ['customer', 'family_name'] },
+                    { key: 'email_address', label: 'Email', visible: true, path: ['customer', 'email_address'] },
+                    { key: 'phone_number', label: 'Phone', visible: true, path: ['customer', 'phone_number'] },
                     { key: 'line_item_name', label: 'Line Item', visible: true, path: ['line_item_name'] },
                     { key: 'quantity', label: 'Quantity', visible: true, path: ['quantity'] },
                     { key: 'purchase_date', label: 'Purchase Date', visible: true, path: ['purchase_date'] },
@@ -1377,7 +1379,7 @@
                             </div>
                             <span className="text-gray-600 dark:text-gray-300 font-semibold">{filteredAndSortedData.length} {reportType === 'customer' ? 'Customers' : 'Items'}</span>
                         </div>
-                        <h2 className="text-4xl font-bold text-gray-800 dark:text-gray-200">Customer Report</h2>
+                        <h2 className="text-4xl font-bold text-gray-800 dark:text-gray-200">{reportType === 'customer' ? 'Customer Report' : 'Item Report'}</h2>
                         <div className="mt-8 bg-white dark:bg-gray-800 rounded-lg shadow overflow-x-auto">
                             <table className="w-full text-sm text-left text-gray-500 dark:text-gray-400">
                                 <thead className="text-xs text-gray-700 dark:text-gray-400 uppercase bg-gray-50 dark:bg-gray-700">
@@ -1392,7 +1394,9 @@
                                                 
                                                 if (reportType === 'customer') {
                                                     const customer = row;
-                                                    if (field.key === 'given_name') {
+                                                    if (field.key === 'customer_id') {
+                                                        cellContent = customer.id || 'N/A';
+                                                    } else if (field.key === 'given_name') {
                                                         cellContent = <button onClick={() => onSelectCustomer(customer)} className="text-cyan-600 dark:text-cyan-400 hover:underline font-medium whitespace-nowrap">{customer.given_name || ''}</button>;
                                                     } else if (field.key === 'groups') {
                                                         const groupNames = (customer.group_ids || []).map(id => ({ name: groupsMap.get(id) || id, color: 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300' }));
@@ -1405,10 +1409,20 @@
                                                         cellContent = getNestedValue(customer, field.path) || 'N/A';
                                                     }
                                                 } else { // Item report
-                                                    if (field.key === 'given_name') {
-                                                        cellContent = <button onClick={() => onSelectCustomer(row.customer)} className="text-cyan-600 dark:text-cyan-400 hover:underline font-medium whitespace-nowrap">{row.customer.given_name || ''}</button>;
+                                                    // Check if the customer exists before trying to access properties
+                                                    const customer = row.customer;
+                                                    const customerExists = customer && Object.keys(customer).length > 0;
+                                                    
+                                                    if (field.key === 'customer_id') {
+                                                        cellContent = row.customer_id || 'N/A';
+                                                    } else if (field.key === 'given_name') {
+                                                        cellContent = customerExists ? <button onClick={() => onSelectCustomer(customer)} className="text-cyan-600 dark:text-cyan-400 hover:underline font-medium whitespace-nowrap">{customer.given_name || ''}</button> : 'N/A';
                                                     } else if (field.key === 'family_name') {
-                                                        cellContent = row.customer.family_name || 'N/A';
+                                                        cellContent = customerExists ? customer.family_name || 'N/A' : 'N/A';
+                                                    } else if (field.key === 'email_address') {
+                                                        cellContent = customerExists ? customer.email_address || 'N/A' : 'N/A';
+                                                    } else if (field.key === 'phone_number') {
+                                                        cellContent = customerExists ? customer.phone_number || 'N/A' : 'N/A';
                                                     } else if (field.key === 'line_item_name') {
                                                         cellContent = row.line_item_name || 'N/A';
                                                     } else if (field.key === 'quantity') {
@@ -1467,6 +1481,12 @@
                     if (reportType === 'customer' && field.key === 'groups') {
                         (row.group_ids || []).forEach(id => { if(groupsMap.has(id)) values.add(groupsMap.get(id))});
                         (row.segment_ids || []).forEach(id => { if(segmentsMap.has(id)) values.add(segmentsMap.get(id))});
+                    } else if (reportType === 'item' && ['given_name', 'family_name', 'email_address', 'phone_number'].includes(field.key)) {
+                        // Special handling for item report customer fields
+                        if (row.customer && Object.keys(row.customer).length > 0) {
+                            value = getNestedValue(row, field.path);
+                            values.add((value || 'N/A').toString());
+                        }
                     } else {
                         value = getNestedValue(row, field.path);
                         if (isDateField) {
