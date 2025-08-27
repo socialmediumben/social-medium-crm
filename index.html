@@ -733,14 +733,11 @@
                 if (isPersonal) {
                     console.log("Attempting to delete personal report.");
                     const userDocRef = db.collection('users').doc(user.uid);
-                    const reportToDelete = personalReports.find(r => r.id === reportId);
-                    if (reportToDelete) {
-                        console.log("Found personal report to delete. Updating savedReports.");
-                        await userDocRef.update({
-                            savedReports: firebase.firestore.FieldValue.arrayRemove(serializeReport(reportToDelete))
-                        });
-                    } else {
-                        console.log("Could not find report to delete in personal reports array.");
+                    const doc = await userDocRef.get();
+                    if (doc.exists) {
+                        const currentReports = doc.data().savedReports || [];
+                        const updatedReports = currentReports.filter(r => r.id !== reportId);
+                        await userDocRef.update({ savedReports: updatedReports });
                     }
                 } else {
                     console.log("Attempting to delete shared report.");
@@ -749,16 +746,10 @@
                     if (doc.exists) {
                         const currentReports = doc.data().allReports || [];
                         console.log("Current public reports from Firestore:", currentReports);
-                        const reportToDelete = currentReports.find(r => r.id === reportId);
-                        if (reportToDelete) {
-                            console.log("Found shared report to delete. Filtering and updating.");
-                            const updatedReports = currentReports.filter(r => r.id !== reportId);
-                            await publicReportsDocRef.update({
-                                allReports: updatedReports
-                            });
-                        } else {
-                            console.log("Could not find report to delete in public reports array.");
-                        }
+                        const updatedReports = currentReports.filter(r => r.id !== reportId);
+                        await publicReportsDocRef.update({
+                            allReports: updatedReports
+                        });
                     }
                 }
             };
@@ -1178,6 +1169,8 @@
                     { key: 'groups', label: 'Groups & Segments', visible: true, path: [] },
                     // New field for Last Contact Date
                     { key: 'last_sms_contact', label: 'Last Contact Date', visible: true, path: ['last_sms_contact'] },
+                    // New field for Notes
+                    { key: 'note', label: 'Notes', visible: true, path: ['note'] },
                 ];
                 return [...standardFields];
             }, []);
@@ -1194,6 +1187,8 @@
                     { key: 'purchase_date', label: 'Purchase Date', visible: true, path: ['purchase_date'] },
                     // New field for Last Contact Date on the item report
                     { key: 'last_sms_contact', label: 'Last Contact Date', visible: true, path: ['customer', 'last_sms_contact'] },
+                    // New field for Notes on the item report
+                    { key: 'note', label: 'Notes', visible: true, path: ['customer', 'note'] },
                 ];
             }, []);
 
@@ -1436,6 +1431,7 @@
                                         <tr key={reportType === 'customer' ? row.id : row.item_uid} className="bg-white dark:bg-gray-800 border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600">
                                             {visibleFields.map(field => {
                                                 let cellContent = 'N/A';
+                                                let cellClassName = "px-6 py-4 whitespace-nowrap";
                                                 
                                                 if (reportType === 'customer') {
                                                     const customer = row;
@@ -1448,13 +1444,15 @@
                                                         const segmentNames = (customer.segment_ids || []).map(id => ({ name: segmentsMap.get(id) || id, color: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300' }));
                                                         const allPills = [...groupNames, ...segmentNames];
                                                         cellContent = <div className="flex flex-wrap gap-1">{allPills.map((pill, i) => <Pill key={i} text={pill.name} color={pill.color} />)}</div>;
-                                                    } else if (field.path && (field.path.includes('created_at') || field.key === 'last_sms_contact')) {
+                                                    } else if (field.key === 'last_sms_contact') {
                                                         cellContent = formatSimpleDate(getNestedValue(customer, field.path));
+                                                    } else if (field.key === 'note') {
+                                                        cellContent = getNestedValue(customer, field.path) || 'N/A';
+                                                        cellClassName = "px-6 py-4 whitespace-normal max-w-xs";
                                                     } else {
                                                         cellContent = getNestedValue(customer, field.path) || 'N/A';
                                                     }
                                                 } else { // Item report
-                                                    // Check if the customer exists before trying to access properties
                                                     const customer = row.customer;
                                                     const customerExists = customer && Object.keys(customer).length > 0;
                                                     
@@ -1472,14 +1470,19 @@
                                                         cellContent = row.line_item_name || 'N/A';
                                                     } else if (field.key === 'quantity') {
                                                         cellContent = row.quantity;
-                                                    } else if (field.path && (field.path.includes('purchase_date') || field.key === 'last_sms_contact')) {
+                                                    } else if (field.key === 'purchase_date') {
                                                         cellContent = formatSimpleDate(getNestedValue(row, field.path));
+                                                    } else if (field.key === 'last_sms_contact') {
+                                                        cellContent = customerExists ? formatSimpleDate(getNestedValue(row, field.path)) : 'N/A';
+                                                    } else if (field.key === 'note') {
+                                                        cellContent = customerExists ? getNestedValue(customer, field.path) || 'N/A' : 'N/A';
+                                                        cellClassName = "px-6 py-4 whitespace-normal max-w-xs";
                                                     } else {
                                                         cellContent = getNestedValue(row, field.path) || 'N/A';
                                                     }
                                                 }
 
-                                                return <td key={field.key} className="px-6 py-4 whitespace-nowrap">{cellContent}</td>;
+                                                return <td key={field.key} className={cellClassName}>{cellContent}</td>;
                                             })}
                                         </tr>
                                     ))}
@@ -1500,8 +1503,13 @@
             const isFiltered = filters[field.key] && (filters[field.key].values?.size > 0 || filters[field.key].date_range || filters[field.key].relative_date_range);
             const isDateFilter = field.key === 'created_at' || field.key === 'purchase_date' || field.key === 'last_sms_contact';
 
+            let headerClassName = "px-6 py-3";
+            if (field.key === 'note') {
+                headerClassName += " max-w-xs";
+            }
+            
             return (
-                <th scope="col" className="px-6 py-3">
+                <th scope="col" className={headerClassName}>
                     <div className="flex items-center">
                         <button onClick={() => setSortConfig({ key: field.key, direction: sortConfig.key === field.key && sortConfig.direction === 'ascending' ? 'descending' : 'ascending' })} className="uppercase font-bold">
                             {field.label}
@@ -2115,7 +2123,9 @@
                                     {(customer.segment_ids || []).map(id => <Pill key={id} text={segmentsMap.get(id) || id} color="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300" />)}
                                 </div>
                             </InfoCard>
-                            
+                            <InfoCard title="Notes" className="md:col-span-3">
+                                <p className="text-gray-800 dark:text-gray-300 whitespace-pre-wrap">{customer.note || 'N/A'}</p>
+                            </InfoCard>
                             <InfoCard title="Custom Fields" className="md:col-span-3">
                                 <div className="grid grid-cols-2 gap-x-8">
                                     <div>
