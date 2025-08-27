@@ -161,6 +161,8 @@
             const [customerDetails, setCustomerDetails] = useState(null);
 
             const API_PROXY_URL = 'https://square-checkin-backend.onrender.com';
+            // Item ID for 'Contacted (Martin)'
+            const contactedMartinItemId = "376G3V4PU6H6VE6MEREUY3TD";
 
             useEffect(() => {
                 if (theme === 'dark') {
@@ -337,7 +339,6 @@
             const fetchAllOrders = useCallback(async (locationId) => {
                 setLoadingMessage('Fetching all orders...');
                 
-                // Create a map of customers by a combined first name and phone number for reliable matching
                 const customerMapByContact = new Map();
                 for (const customer of allCustomers) {
                     if (customer.given_name && customer.phone_number) {
@@ -358,10 +359,8 @@
                     });
                     
                     if (data && data.orders) {
-                        // Iterate through orders to find a customer ID for online orders
                         const ordersWithCustomerId = data.orders.map(order => {
                             if (!order.customer_id && order.fulfillments?.[0]?.pickup_details?.recipient?.given_name && order.fulfillments?.[0]?.pickup_details?.recipient?.phone_number) {
-                                // This is a non-in-person order, let's try to match it
                                 const recipient = order.fulfillments[0].pickup_details.recipient;
                                 const key = `${recipient.given_name.toLowerCase().trim()}-${recipient.phone_number.replace(/\D/g, '')}`;
                                 const matchedCustomerId = customerMapByContact.get(key);
@@ -375,20 +374,40 @@
                         fetchedOrders.push(...ordersWithCustomerId);
                     }
                     cursor = data.cursor;
-                    if (cursor) await delay(200); // Throttle requests
+                    if (cursor) await delay(200);
                 } while (cursor);
 
-                // Flatten orders into line items
+                // Find last contact date for each customer
+                const lastContactDates = new Map();
+                for (const order of fetchedOrders) {
+                    if (order.line_items && order.customer_id) {
+                        const contactItem = order.line_items.find(item => item.catalog_object_id === contactedMartinItemId);
+                        if (contactItem) {
+                            const existingDate = lastContactDates.get(order.customer_id);
+                            if (!existingDate || new Date(order.closed_at) > new Date(existingDate)) {
+                                lastContactDates.set(order.customer_id, order.closed_at);
+                            }
+                        }
+                    }
+                }
+
+                // Attach last contact date to customer objects
+                const customersWithContactDates = allCustomers.map(customer => ({
+                    ...customer,
+                    last_sms_contact: lastContactDates.get(customer.id) || null
+                }));
+
+                setAllCustomers(customersWithContactDates);
+
                 const flattenedItems = fetchedOrders.flatMap(order => 
                     (order.line_items || []).map(item => ({
-                        // Use a composite key that is guaranteed to be unique
                         item_uid: `${order.id}-${item.uid}`,
                         order_id: order.id,
                         customer_id: order.customer_id,
                         line_item_name: item.name,
                         quantity: parseFloat(item.quantity),
                         purchase_date: order.closed_at,
-                        order_total: order.total_money.amount / 100 // Convert cents to dollars
+                        order_total: order.total_money.amount / 100
                     }))
                 );
                 
@@ -1157,8 +1176,9 @@
                     { key: 'phone_number', label: 'Phone', visible: true, path: ['phone_number'] },
                     { key: 'created_at', label: 'Customer Since', visible: true, path: ['created_at'] },
                     { key: 'groups', label: 'Groups & Segments', visible: true, path: [] },
+                    // New field for Last Contact Date
+                    { key: 'last_sms_contact', label: 'Last Contact Date', visible: true, path: ['last_sms_contact'] },
                 ];
-                // Remove custom fields from this list
                 return [...standardFields];
             }, []);
 
@@ -1172,6 +1192,8 @@
                     { key: 'line_item_name', label: 'Line Item', visible: true, path: ['line_item_name'] },
                     { key: 'quantity', label: 'Quantity', visible: true, path: ['quantity'] },
                     { key: 'purchase_date', label: 'Purchase Date', visible: true, path: ['purchase_date'] },
+                    // New field for Last Contact Date on the item report
+                    { key: 'last_sms_contact', label: 'Last Contact Date', visible: true, path: ['customer', 'last_sms_contact'] },
                 ];
             }, []);
 
@@ -1241,7 +1263,7 @@
                         }
 
                         let value = getNestedValue(row, field.path);
-                        if (field.path && (field.path.includes('created_at') || field.path.includes('purchase_date'))) {
+                        if (field.path && (field.path.includes('created_at') || field.path.includes('purchase_date') || field.key === 'last_sms_contact')) {
                              // Handle date filters
                             const rowDate = value ? new Date(value) : null;
                             
@@ -1301,7 +1323,7 @@
                         } else if (field.key === 'quantity') {
                             aVal = getNestedValue(a, field.path) || 0;
                             bVal = getNestedValue(b, field.path) || 0;
-                        } else if (field.key === 'purchase_date' || field.key === 'created_at') {
+                        } else if (field.key === 'purchase_date' || field.key === 'created_at' || field.key === 'last_sms_contact') {
                             const aDate = getNestedValue(a, field.path);
                             const bDate = getNestedValue(b, field.path);
                             aVal = aDate ? new Date(aDate) : new Date(0);
@@ -1426,7 +1448,7 @@
                                                         const segmentNames = (customer.segment_ids || []).map(id => ({ name: segmentsMap.get(id) || id, color: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300' }));
                                                         const allPills = [...groupNames, ...segmentNames];
                                                         cellContent = <div className="flex flex-wrap gap-1">{allPills.map((pill, i) => <Pill key={i} text={pill.name} color={pill.color} />)}</div>;
-                                                    } else if (field.path.includes('created_at')) {
+                                                    } else if (field.path && (field.path.includes('created_at') || field.key === 'last_sms_contact')) {
                                                         cellContent = formatSimpleDate(getNestedValue(customer, field.path));
                                                     } else {
                                                         cellContent = getNestedValue(customer, field.path) || 'N/A';
@@ -1450,7 +1472,7 @@
                                                         cellContent = row.line_item_name || 'N/A';
                                                     } else if (field.key === 'quantity') {
                                                         cellContent = row.quantity;
-                                                    } else if (field.path.includes('purchase_date')) {
+                                                    } else if (field.path && (field.path.includes('purchase_date') || field.key === 'last_sms_contact')) {
                                                         cellContent = formatSimpleDate(getNestedValue(row, field.path));
                                                     } else {
                                                         cellContent = getNestedValue(row, field.path) || 'N/A';
@@ -1476,7 +1498,7 @@
         const SortableHeader = ({ field, setSortConfig, sortConfig, setActiveFilterPopup, filters, reportType, allOrders, allCustomers, groupsMap, segmentsMap }) => {
             const isSorted = sortConfig.key === field.key;
             const isFiltered = filters[field.key] && (filters[field.key].values?.size > 0 || filters[field.key].date_range || filters[field.key].relative_date_range);
-            const isDateFilter = field.key === 'created_at' || field.key === 'purchase_date';
+            const isDateFilter = field.key === 'created_at' || field.key === 'purchase_date' || field.key === 'last_sms_contact';
 
             return (
                 <th scope="col" className="px-6 py-3">
@@ -1495,7 +1517,7 @@
 
         function FilterPopup({ field, allCustomers, allOrders, filters, setFilters, onClose, getNestedValue, groupsMap, segmentsMap, reportType }) {
             const dataForFilter = reportType === 'customer' ? allCustomers : allOrders;
-            const isDateField = field.key === 'created_at' || field.key === 'purchase_date';
+            const isDateField = field.key === 'created_at' || field.key === 'purchase_date' || field.key === 'last_sms_contact';
 
             const getFieldValues = () => {
                 const values = new Set();
