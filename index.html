@@ -710,21 +710,36 @@
             };
 
             const handleDeleteReport = async (reportId, isPersonal) => {
+                console.log("handleDeleteReport called with:", { reportId, isPersonal });
                 if (isPersonal) {
+                    console.log("Attempting to delete personal report.");
                     const userDocRef = db.collection('users').doc(user.uid);
                     const reportToDelete = personalReports.find(r => r.id === reportId);
                     if (reportToDelete) {
+                        console.log("Found personal report to delete. Updating savedReports.");
                         await userDocRef.update({
                             savedReports: firebase.firestore.FieldValue.arrayRemove(serializeReport(reportToDelete))
                         });
+                    } else {
+                        console.log("Could not find report to delete in personal reports array.");
                     }
                 } else {
+                    console.log("Attempting to delete shared report.");
                     const publicReportsDocRef = db.collection('public').doc('reports');
-                    const reportToDelete = publicReports.find(r => r.id === reportId);
-                    if (reportToDelete) {
-                        await publicReportsDocRef.update({
-                            allReports: firebase.firestore.FieldValue.arrayRemove(serializeReport(reportToDelete))
-                        });
+                    const doc = await publicReportsDocRef.get();
+                    if (doc.exists) {
+                        const currentReports = doc.data().allReports || [];
+                        console.log("Current public reports from Firestore:", currentReports);
+                        const reportToDelete = currentReports.find(r => r.id === reportId);
+                        if (reportToDelete) {
+                            console.log("Found shared report to delete. Filtering and updating.");
+                            const updatedReports = currentReports.filter(r => r.id !== reportId);
+                            await publicReportsDocRef.update({
+                                allReports: updatedReports
+                            });
+                        } else {
+                            console.log("Could not find report to delete in public reports array.");
+                        }
                     }
                 }
             };
@@ -1690,7 +1705,7 @@
                                 </div>
                             ) : (
                                 <>
-                                    <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Search values..." className="w-full px-2 py-1 border rounded-md text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white mb-2"/>
+                                    <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Search values..." className="w-full px-2 py-1 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white mb-2"/>
                                     <div className="grid grid-cols-2 gap-4">
                                         <div>
                                             <h4 className="text-sm font-semibold mb-2 dark:text-gray-300">Match These</h4>
@@ -1758,7 +1773,11 @@
             };
 
             const handleDelete = () => {
-                if (deleteModal) { onDeleteReport(deleteModal.id, deleteModal.isPersonal); }
+                console.log("handleDelete from sidebar called");
+                if (deleteModal) {
+                    console.log("Calling onDeleteReport with:", deleteModal.id, deleteModal.isPersonal);
+                    onDeleteReport(deleteModal.id, deleteModal.isPersonal);
+                }
                 setDeleteModal(null);
             };
 
@@ -1780,7 +1799,10 @@
                                     </button>
                                     <div className="hidden group-hover:flex items-center flex-shrink-0">
                                         <button onClick={() => setReportToEdit(r)} className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded text-xs">✏️</button>
-                                        <button onClick={() => setDeleteModal(r)} className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded text-xs">🗑️</button>
+                                        <button onClick={() => {
+                                            console.log("Delete button clicked for report:", r);
+                                            setDeleteModal(r);
+                                        }} className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded text-xs">🗑️</button>
                                     </div>
                                 </div>
                             ))}
