@@ -121,12 +121,6 @@
                     endDate = new Date(quarterEnd.getTime());
                     endDate.setHours(23, 59, 59, 999);
                     break;
-                case 'Last Year':
-                    startDate = new Date(startDate.getFullYear() - 1, 0, 1);
-                    const lastYearEnd = new Date(startDate.getFullYear(), 11, 31);
-                    endDate = lastYearEnd;
-                    endDate.setHours(23, 59, 59, 999);
-                    break;
             }
             return { startDate: startDate.toISOString(), endDate: endDate.toISOString() };
         };
@@ -482,7 +476,7 @@
                     fetchAllOrders(locationId);
                 }
             }, [allCustomers, locationId, fetchAllOrders]);
-
+            
             const handleUpdateCustomAttribute = async (customerId, attributeKey, value) => {
                 try {
                     const payload = {
@@ -1198,22 +1192,39 @@
             const [sortConfig, setSortConfig] = useState(initialReport?.sortConfig || { key: 'given_name', direction: 'ascending' });
             const [activeFieldFilterPopup, setActiveFieldFilterPopup] = useState(null);
             const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
-            
+            const [refreshReportTrigger, setRefreshReportTrigger] = useState(0);
+
             const visibleFields = useMemo(() => fields.filter(c => c.visible), [fields]);
             
             // Map customers by ID for quick lookup
             const customerMap = useMemo(() => {
+                console.log("[DEBUG-MAP] Creating customer map...");
                 const map = new Map();
-                (allCustomers || []).forEach(c => map.set(c.id, c));
+                (allCustomers || []).forEach(c => {
+                    map.set(c.id, c);
+                    if (c.note) {
+                        console.log(`[DEBUG-MAP] Found note for customer ID ${c.id}: "${c.note}"`);
+                    } else {
+                        // console.log(`[DEBUG-MAP] No note for customer ID ${c.id}`);
+                    }
+                });
                 return map;
             }, [allCustomers]);
             
             const enrichedOrders = useMemo(() => {
-                return (allOrders || []).map(order => ({
-                    ...order,
-                    customer: customerMap.get(order.customer_id) || {}
-                }));
-            }, [allOrders, customerMap]);
+                console.log("[DEBUG-ENRICH] Enriching orders with customer data...");
+                return (allOrders || []).map(order => {
+                    const customer = customerMap.get(order.customer_id) || {};
+                    const enrichedOrder = {
+                        ...order,
+                        customer: customer
+                    };
+                    if (enrichedOrder.customer.note) {
+                        console.log(`[DEBUG-ENRICH] Enriched order ${order.id} with customer note: "${enrichedOrder.customer.note}"`);
+                    }
+                    return enrichedOrder;
+                });
+            }, [allOrders, customerMap, refreshReportTrigger]);
 
             const dataToDisplay = reportType === 'customer' ? (allCustomers || []) : enrichedOrders;
 
@@ -1337,7 +1348,7 @@
                     });
                 }
                 return data;
-            }, [dataToDisplay, fieldFilters, sortConfig, fields, groupsMap, segmentsMap]);
+            }, [dataToDisplay, fieldFilters, sortConfig, fields, groupsMap, segmentsMap, refreshReportTrigger]);
             
             const handleModalSave = (name, isWidget, isShared, targetMin, targetMax, targetType, reverseRange) => {
                 const report = { 
@@ -1389,6 +1400,10 @@
             const percentage = totalCustomers > 0 ? (filteredAndSortedData.length / totalCustomers * 100).toFixed(1) : 0;
             const itemReportFields = getItemReportFields();
 
+            const handleLocalRefresh = () => {
+                setRefreshReportTrigger(prev => prev + 1);
+            };
+
             return (
                 <div className="flex h-full">
                     <ReportsSidebar 
@@ -1417,6 +1432,7 @@
                                     Item Report
                                 </button>
                             </div>
+                            <button onClick={handleLocalRefresh} className="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded-md text-sm font-medium hover:bg-gray-300 dark:hover:bg-gray-600 transition">Refresh Report</button>
                             <span className="text-gray-600 dark:text-gray-300 font-semibold">{filteredAndSortedData.length} {reportType === 'customer' ? 'Customers' : 'Items'}</span>
                         </div>
                         <h2 className="text-4xl font-bold text-gray-800 dark:text-gray-200">{reportType === 'customer' ? 'Customer Report' : 'Item Report'}</h2>
@@ -1475,6 +1491,8 @@
                                                     } else if (field.key === 'last_sms_contact') {
                                                         cellContent = customerExists ? formatSimpleDate(getNestedValue(row, field.path)) : 'N/A';
                                                     } else if (field.key === 'note') {
+                                                        console.log(`[DEBUG-RENDER] Rendering item report row for customer ID: ${customer.id}`);
+                                                        console.log(`[DEBUG-RENDER] Field path: ${field.path}, value: ${getNestedValue(customer, field.path)}`);
                                                         cellContent = customerExists ? getNestedValue(customer, field.path) || 'N/A' : 'N/A';
                                                         cellClassName = "px-6 py-4 whitespace-normal max-w-xs";
                                                     } else {
