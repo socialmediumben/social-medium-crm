@@ -723,9 +723,7 @@
             };
 
             const handleDeleteReport = async (reportId, isPersonal) => {
-                console.log("handleDeleteReport called with:", { reportId, isPersonal });
                 if (isPersonal) {
-                    console.log("Attempting to delete personal report.");
                     const userDocRef = db.collection('users').doc(user.uid);
                     const doc = await userDocRef.get();
                     if (doc.exists) {
@@ -734,12 +732,10 @@
                         await userDocRef.update({ savedReports: updatedReports });
                     }
                 } else {
-                    console.log("Attempting to delete shared report.");
                     const publicReportsDocRef = db.collection('public').doc('reports');
                     const doc = await publicReportsDocRef.get();
                     if (doc.exists) {
                         const currentReports = doc.data().allReports || [];
-                        console.log("Current public reports from Firestore:", currentReports);
                         const updatedReports = currentReports.filter(r => r.id !== reportId);
                         await publicReportsDocRef.update({
                             allReports: updatedReports
@@ -1198,12 +1194,10 @@
             
             // Map customers by ID for quick lookup
             const customerMap = useMemo(() => {
-                console.log("[DEBUG-MAP] Creating customer map...");
                 const map = new Map();
                 (allCustomers || []).forEach(c => {
                     map.set(c.id, c);
                     if (c.note) {
-                        console.log(`[DEBUG-MAP] Found note for customer ID ${c.id}: "${c.note}"`);
                     } else {
                         // console.log(`[DEBUG-MAP] No note for customer ID ${c.id}`);
                     }
@@ -1212,7 +1206,6 @@
             }, [allCustomers]);
             
             const enrichedOrders = useMemo(() => {
-                console.log("[DEBUG-ENRICH] Enriching orders with customer data...");
                 return (allOrders || []).map(order => {
                     const customer = customerMap.get(order.customer_id) || {};
                     const enrichedOrder = {
@@ -1220,7 +1213,6 @@
                         customer: customer
                     };
                     if (enrichedOrder.customer.note) {
-                        console.log(`[DEBUG-ENRICH] Enriched order ${order.id} with customer note: "${enrichedOrder.customer.note}"`);
                     }
                     return enrichedOrder;
                 });
@@ -1491,8 +1483,6 @@
                                                     } else if (field.key === 'last_sms_contact') {
                                                         cellContent = customerExists ? formatSimpleDate(getNestedValue(row, field.path)) : 'N/A';
                                                     } else if (field.key === 'note') {
-                                                        console.log(`[DEBUG-RENDER] Rendering item report row for customer ID: ${customer.id}`);
-                                                        console.log(`[DEBUG-RENDER] Field path: ${field.path}, value: ${getNestedValue(customer, field.path)}`);
                                                         cellContent = customerExists ? getNestedValue(customer, field.path) || 'N/A' : 'N/A';
                                                         cellClassName = "px-6 py-4 whitespace-normal max-w-xs";
                                                     } else {
@@ -1821,9 +1811,7 @@
             };
 
             const handleDelete = () => {
-                console.log("handleDelete from sidebar called");
                 if (deleteModal) {
-                    console.log("Calling onDeleteReport with:", deleteModal.id, deleteModal.isPersonal);
                     onDeleteReport(deleteModal.id, deleteModal.isPersonal);
                 }
                 setDeleteModal(null);
@@ -1848,7 +1836,6 @@
                                     <div className="hidden group-hover:flex items-center flex-shrink-0">
                                         <button onClick={() => setReportToEdit(r)} className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded text-xs">✏️</button>
                                         <button onClick={() => {
-                                            console.log("Delete button clicked for report:", r);
                                             setDeleteModal(r);
                                         }} className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded text-xs">🗑️</button>
                                     </div>
@@ -1983,8 +1970,6 @@
                 // You would trigger a Firebase Cloud Function to handle the deletion securely on the server.
                 // This prevents exposing any administrator credentials and ensures all associated data (like their
                 // user document, private checklists, etc.) are deleted cleanly.
-                console.log(`[ACTION] Attempting to delete user with ID: ${userId}`);
-                console.log("This action should be handled by a secure Firebase Cloud Function.");
                 alert(`The user deletion for ${userId} would be handled by a secure backend function.`);
             };
 
@@ -2218,3 +2203,4 @@
     </script>
 </body>
 </html>
+
