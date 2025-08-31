@@ -519,6 +519,31 @@
                 }
             };
             
+            const handleUpdateNote = async (customerId, note) => {
+                try {
+                    const { customer } = await apiFetch(`/v2/customers/${customerId}`, {
+                        method: 'PUT',
+                        body: JSON.stringify({ note }),
+                    });
+
+                    // Update the main customer list
+                    setAllCustomers(prevCustomers =>
+                        prevCustomers.map(c => (c.id === customerId ? customer : c))
+                    );
+
+                    // Update the detailed view if it's the same customer
+                    if (customerDetails && customerDetails.id === customerId) {
+                        setCustomerDetails(prevDetails => ({
+                            ...prevDetails,
+                            ...customer
+                        }));
+                    }
+                } catch (err) {
+                    console.error("Failed to update note:", err);
+                    setError("Could not update note. Please try again.");
+                }
+            };
+
             const handleLogContact = async (customerId) => {
                 if (!locationId) {
                     setError("Location ID is not set. Cannot log contact.");
@@ -779,7 +804,7 @@
 
                 switch(currentView) {
                     case 'profile':
-                        return customerDetails ? <CustomerProfile customer={customerDetails} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} onBack={() => setCurrentView('directory')} onLogContact={handleLogContact} /> : <div className="flex justify-center items-center h-full"><div className="spinner"></div></div>;
+                        return customerDetails ? <CustomerProfile customer={customerDetails} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} onBack={() => setCurrentView('directory')} onLogContact={handleLogContact} onUpdateNote={handleUpdateNote} /> : <div className="flex justify-center items-center h-full"><div className="spinner"></div></div>;
                     case 'reports':
                         return <ReportsPage allCustomers={allCustomers} allOrders={allOrders} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} onSelectCustomer={handleSelectCustomer} onBack={() => setCurrentView('dashboard')} savedReports={combinedReports} onSaveReport={handleSaveReport} onUpdateReport={handleUpdateReport} onDeleteReport={handleDeleteReport} initialReport={reportToLoad} onInitialReportLoaded={() => setReportToLoad(null)} totalCustomers={allCustomers.length} />;
                     case 'directory':
@@ -2065,8 +2090,24 @@
         }
 
 
-        function CustomerProfile({ customer, groupsMap, segmentsMap, onBack, onLogContact, customAttrDefs }) {
-            
+        function CustomerProfile({ customer, groupsMap, segmentsMap, onBack, onLogContact, customAttrDefs, onUpdateNote }) {
+            const [isEditingNote, setIsEditingNote] = useState(false);
+            const [noteText, setNoteText] = useState(customer.note || '');
+
+            useEffect(() => {
+                setNoteText(customer.note || '');
+            }, [customer.note]);
+
+            const handleSaveNote = () => {
+                onUpdateNote(customer.id, noteText);
+                setIsEditingNote(false);
+            };
+
+            const handleCancelEditNote = () => {
+                setNoteText(customer.note || '');
+                setIsEditingNote(false);
+            };
+
             const formatAddress = (address) => {
                 if (!address) return 'N/A';
                 const parts = [ address.address_line_1, address.address_line_2, `${address.locality || ''} ${address.administrative_district_level_1 || ''} ${address.postal_code || ''}`.trim(), address.country ];
@@ -2127,7 +2168,24 @@
                                 </div>
                             </InfoCard>
                             <InfoCard title="Notes" className="md:col-span-3">
-                                <p className="text-gray-800 dark:text-gray-300 whitespace-pre-wrap">{customer.note || 'N/A'}</p>
+                                {!isEditingNote ? (
+                                    <>
+                                        <p className="text-gray-800 dark:text-gray-300 whitespace-pre-wrap">{customer.note || 'N/A'}</p>
+                                        <button onClick={() => setIsEditingNote(true)} className="mt-2 px-3 py-1 bg-gray-200 dark:bg-gray-700 text-sm rounded-md hover:bg-gray-300 dark:hover:bg-gray-600">Edit</button>
+                                    </>
+                                ) : (
+                                    <>
+                                        <textarea
+                                            value={noteText}
+                                            onChange={(e) => setNoteText(e.target.value)}
+                                            className="w-full h-24 p-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                                        />
+                                        <div className="flex justify-end space-x-2 mt-2">
+                                            <button onClick={handleCancelEditNote} className="px-4 py-2 bg-gray-200 dark:bg-gray-600 rounded-md">Cancel</button>
+                                            <button onClick={handleSaveNote} className="px-4 py-2 bg-cyan-600 text-white rounded-md">Save</button>
+                                        </div>
+                                    </>
+                                )}
                             </InfoCard>
                             <InfoCard title="Custom Fields" className="md:col-span-3">
                                 <div className="grid grid-cols-2 gap-x-8">
