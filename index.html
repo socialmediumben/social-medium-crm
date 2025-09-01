@@ -148,6 +148,7 @@
             const [checklist, setChecklist] = useState([]);
             const [allUsers, setAllUsers] = useState([]);
             const [googleCalendarId, setGoogleCalendarId] = useState(null);
+            const [displayChecklist, setDisplayChecklist] = useState([]);
             
             // View management
             const [currentView, setCurrentView] = useState('dashboard');
@@ -278,10 +279,8 @@
 
                 let query;
                 if (isAdmin) {
-                    // No longer ordering by 'createdAt' here to avoid needing the composite index
                     query = db.collectionGroup('checklists');
                 } else {
-                    // This query for individual users is fine and doesn't need a special index
                     query = db.collection('users').doc(user.uid).collection('checklists').orderBy('createdAt', 'asc');
                 }
                 
@@ -291,15 +290,6 @@
                         userId: doc.ref.parent.parent.id,
                         ...doc.data()
                     }));
-
-                    // If it's the admin view, sort the combined results on the client-side
-                    if (isAdmin) {
-                        items.sort((a, b) => {
-                            const dateA = a.createdAt?.toDate() || new Date(0);
-                            const dateB = b.createdAt?.toDate() || new Date(0);
-                            return dateA - dateB; // Sort ascending
-                        });
-                    }
                     
                     setChecklist(items);
                 }, error => {
@@ -309,6 +299,41 @@
 
                 return () => unsubscribe();
             }, [user, isAdmin, authLoading]);
+
+            useEffect(() => {
+                if (isAdmin && allUsers.length > 0) {
+                    const userMap = new Map();
+                    allUsers.forEach(user => {
+                        userMap.set(user.id, user.name || user.email || 'No Email');
+                    });
+
+                    const itemsByUser = checklist.reduce((acc, item) => {
+                        const userId = item.userId;
+                        if (!acc[userId]) {
+                            acc[userId] = [];
+                        }
+                        acc[userId].push(item);
+                        return acc;
+                    }, {});
+
+                    const groupedChecklists = Object.keys(itemsByUser).map(userId => {
+                        const items = itemsByUser[userId].sort((a, b) => {
+                            const dateA = a.createdAt?.toDate() || new Date(0);
+                            const dateB = b.createdAt?.toDate() || new Date(0);
+                            return dateA - dateB;
+                        });
+                        return {
+                            userId: userId,
+                            userIdentifier: userMap.get(userId) || 'Unknown User',
+                            items: items
+                        };
+                    }).sort((a, b) => a.userIdentifier.localeCompare(b.userIdentifier));
+                    
+                    setDisplayChecklist(groupedChecklists);
+                } else {
+                    setDisplayChecklist(checklist);
+                }
+            }, [checklist, allUsers, isAdmin]);
 
             const handleAddChecklistItem = async (text) => {
                 if (user && text.trim() !== '') {
@@ -755,7 +780,7 @@
                     case 'directory':
                         return <DirectoryPage allCustomers={allCustomers} onSelectCustomer={handleSelectCustomer} onBack={() => setCurrentView('dashboard')} />;
                     case 'checklist':
-                        return <ChecklistPage checklist={checklist} onAdd={handleAddChecklistItem} onUpdate={handleUpdateChecklistItem} onDelete={handleDeleteChecklistItem} onBack={() => setCurrentView('dashboard')} isAdmin={isAdmin} allUsers={allUsers} />;
+                        return <ChecklistPage checklist={displayChecklist} onAdd={handleAddChecklistItem} onUpdate={handleUpdateChecklistItem} onDelete={handleDeleteChecklistItem} onBack={() => setCurrentView('dashboard')} isAdmin={isAdmin} />;
                     case 'admin':
                         return <AdminPage allUsers={allUsers} onBack={() => setCurrentView('dashboard')} />;
                     case 'dashboard':
@@ -1361,7 +1386,7 @@
 
             return (
                 <div className="flex h-full">
-                    <ReportsSidebar fields={fields} setFields={setFields} savedReports={savedReports} onLoadReport={handleLoadReport} onSaveReportClick={() => setIsSaveModalOpen(true)} onUpdateReport={onUpdateReport} onDeleteReport={onDeleteReport} />
+                    <ReportsSidebar fields={fields} setFields={setFields} savedReports={savedReports} onLoadReport={handleLoadReport} onSaveReportClick={() => setIsSaveModalOpen(false)} onUpdateReport={onUpdateReport} onDeleteReport={onDeleteReport} />
                     <div className="flex-1 p-8 overflow-y-auto">
                         <div className="flex justify-between items-center mb-6">
                             <button onClick={onBack} className="text-cyan-600 dark:text-cyan-400 hover:text-cyan-800 dark:hover:text-cyan-200"> &larr; Back to Dashboard</button>
@@ -1952,17 +1977,9 @@
             );
         }
 
-        function ChecklistPage({ checklist, onAdd, onUpdate, onDelete, onBack, isAdmin, allUsers }) {
+        function ChecklistPage({ checklist, onAdd, onUpdate, onDelete, onBack, isAdmin }) {
             const [newItemText, setNewItemText] = useState('');
             
-            const userEmailsMap = useMemo(() => {
-                const map = new Map();
-                allUsers.forEach(user => {
-                    map.set(user.id, user.email || 'No Email');
-                });
-                return map;
-            }, [allUsers]);
-
             const handleAddItem = (e) => {
                 e.preventDefault();
                 onAdd(newItemText);
@@ -1987,26 +2004,56 @@
                             <button type="submit" className="px-4 py-2 bg-cyan-600 text-white rounded-md hover:bg-cyan-700">Add</button>
                         </form>
                         
-                        <ul className="space-y-4">
-                            {checklist.length === 0 && <p className="text-gray-500 text-center dark:text-gray-400">No items on your checklist.</p>}
-                            {checklist.map(item => (
-                                <li key={item.id} className="flex items-center space-x-3 group">
-                                    <input 
-                                        type="checkbox" 
-                                        checked={item.completed} 
-                                        onChange={(e) => onUpdate(item.userId, item.id, e.target.checked)}
-                                        className="h-5 w-5 text-cyan-600 border-gray-300 rounded focus:ring-cyan-500 dark:bg-gray-600 dark:border-gray-500"
-                                    />
-                                    <span className={`flex-grow dark:text-gray-200 ${item.completed ? 'line-through text-gray-400 dark:text-gray-500' : ''}`}>
-                                        {item.text}
-                                    </span>
-                                    {isAdmin && <span className="text-xs text-gray-500 dark:text-gray-400 mr-2">({userEmailsMap.get(item.userId)})</span>}
-                                    <button onClick={() => onDelete(item.userId, item.id)} className="text-red-500 hover:text-red-700 opacity-0 group-hover:opacity-100 transition-opacity">
-                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm6 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clipRule="evenodd" /></svg>
-                                    </button>
-                                </li>
-                            ))}
-                        </ul>
+                        {isAdmin ? (
+                            <div className="space-y-6">
+                                {checklist.length === 0 && <p className="text-gray-500 text-center dark:text-gray-400">No checklists found.</p>}
+                                {checklist.map(userChecklist => (
+                                    <div key={userChecklist.userId}>
+                                        <h3 className="text-lg font-semibold text-gray-700 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700 pb-2 mb-3">
+                                            {userChecklist.userIdentifier}
+                                        </h3>
+                                        <ul className="space-y-4">
+                                            {userChecklist.items.map(item => (
+                                                <li key={item.id} className="flex items-center space-x-3 group">
+                                                    <input 
+                                                        type="checkbox" 
+                                                        checked={item.completed} 
+                                                        onChange={(e) => onUpdate(item.userId, item.id, e.target.checked)}
+                                                        className="h-5 w-5 text-cyan-600 border-gray-300 rounded focus:ring-cyan-500 dark:bg-gray-600 dark:border-gray-500"
+                                                    />
+                                                    <span className={`flex-grow dark:text-gray-200 ${item.completed ? 'line-through text-gray-400 dark:text-gray-500' : ''}`}>
+                                                        {item.text}
+                                                    </span>
+                                                    <button onClick={() => onDelete(item.userId, item.id)} className="text-red-500 hover:text-red-700 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm6 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clipRule="evenodd" /></svg>
+                                                    </button>
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    </div>
+                                ))}
+                            </div>
+                        ) : (
+                            <ul className="space-y-4">
+                                {checklist.length === 0 && <p className="text-gray-500 text-center dark:text-gray-400">No items on your checklist.</p>}
+                                {checklist.map(item => (
+                                    <li key={item.id} className="flex items-center space-x-3 group">
+                                         <input 
+                                            type="checkbox" 
+                                            checked={item.completed} 
+                                            onChange={(e) => onUpdate(item.userId, item.id, e.target.checked)}
+                                            className="h-5 w-5 text-cyan-600 border-gray-300 rounded focus:ring-cyan-500 dark:bg-gray-600 dark:border-gray-500"
+                                        />
+                                        <span className={`flex-grow dark:text-gray-200 ${item.completed ? 'line-through text-gray-400 dark:text-gray-500' : ''}`}>
+                                            {item.text}
+                                        </span>
+                                        <button onClick={() => onDelete(item.userId, item.id)} className="text-red-500 hover:text-red-700 opacity-0 group-hover:opacity-100 transition-opacity">
+                                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm6 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clipRule="evenodd" /></svg>
+                                        </button>
+                                    </li>
+                                ))}
+                            </ul>
+                        )}
                     </div>
                 </div>
             );
