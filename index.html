@@ -1521,7 +1521,7 @@
                                                     } else if (field.key === 'last_sms_contact') {
                                                         cellContent = customerExists ? formatSimpleDate(getNestedValue(row, field.path)) : 'N/A';
                                                     } else if (field.key === 'note') {
-                                                        cellContent = customerExists ? getNestedValue(customer, field.path) || 'N/A' : 'N/A';
+                                                        cellContent = customerExists ? getNestedValue(row, field.path) || 'N/A' : 'N/A';
                                                         cellClassName = "px-6 py-4 whitespace-normal max-w-xs";
                                                     } else {
                                                         cellContent = getNestedValue(row, field.path) || 'N/A';
@@ -2263,5 +2263,4 @@
     </script>
 </body>
 </html>
-
 
