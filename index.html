@@ -134,11 +134,11 @@
             const [loadingMessage, setLoadingMessage] = useState('');
             const [error, setError] = useState('');
             const [theme, setTheme] = useState(localStorage.getItem('theme') || 'light');
-            const [isAdmin, setIsAdmin] = useState(false); // New state for admin status
+            const [isAdmin, setIsAdmin] = useState(false);
             
             // Data stores
             const [allCustomers, setAllCustomers] = useState([]);
-            const [allOrders, setAllOrders] = useState([]); // New state for all orders
+            const [allOrders, setAllOrders] = useState([]);
             const [groupsMap, setGroupsMap] = useState(new Map());
             const [segmentsMap, setSegmentsMap] = useState(new Map());
             const [customAttrDefs, setCustomAttrDefs] = useState(new Map());
@@ -146,7 +146,8 @@
             const [personalReports, setPersonalReports] = useState([]);
             const [publicReports, setPublicReports] = useState([]);
             const [checklist, setChecklist] = useState([]);
-            const [allUsers, setAllUsers] = useState([]); // New state for all users
+            const [allUsers, setAllUsers] = useState([]);
+            const [googleCalendarId, setGoogleCalendarId] = useState(null);
             
             // View management
             const [currentView, setCurrentView] = useState('dashboard');
@@ -158,7 +159,6 @@
 
 
             const API_PROXY_URL = 'https://square-checkin-backend.onrender.com';
-            // Item ID for 'Contacted (Martin)'
             const contactedMartinItemId = "376G3V4PU6H6VE6MEREUY3TD";
 
             useEffect(() => {
@@ -170,11 +170,10 @@
                 localStorage.setItem('theme', theme);
             }, [theme]);
 
-            // Effect to trigger note editor modal after data refresh from log contact
             useEffect(() => {
                 if (pendingNoteEditOnLog && customerDetails) {
                     setNoteEditorState({ isOpen: true, customer: customerDetails });
-                    setPendingNoteEditOnLog(false); // Reset the flag
+                    setPendingNoteEditOnLog(false);
                 }
             }, [customerDetails, pendingNoteEditOnLog]);
 
@@ -196,7 +195,6 @@
                 const unsubscribe = auth.onAuthStateChanged(user => {
                     setUser(user);
                     setAuthLoading(false);
-                    // Fetch user details including admin status
                     if (user) {
                         const userDocRef = db.collection('users').doc(user.uid);
                         userDocRef.get().then(doc => {
@@ -204,7 +202,6 @@
                                 const data = doc.data();
                                 setIsAdmin(data.isAdmin || false);
                             } else {
-                                // If the user doc doesn't exist, create it with isAdmin: false
                                 userDocRef.set({ email: user.email, isAdmin: false, squareAccessToken: null, savedReports: [] });
                                 setIsAdmin(false);
                             }
@@ -218,13 +215,13 @@
                 if (user) {
                     const userDocRef = db.collection('users').doc(user.uid);
                     const publicReportsDocRef = db.collection('public').doc('reports');
+                    const settingsDocRef = db.collection('public').doc('settings');
                     
                     const deserializeReports = (reports = []) => {
                         return reports.map(report => ({
                             ...report,
                             filters: Object.entries(report.filters || {}).reduce((acc, [key, val]) => {
                                 acc[key] = { ...val, values: new Set(val.values || []), excludedValues: new Set(val.excludedValues || []) };
-                                // Re-calculate date range for relative filters
                                 if (val.relative_date_range) {
                                      acc[key].date_range = getRelativeDateRange(val.relative_date_range);
                                 }
@@ -251,8 +248,13 @@
                             setPublicReports(deserializeReports(doc.data().allReports));
                         }
                     });
+
+                    const unsubscribeSettings = settingsDocRef.onSnapshot((doc) => {
+                        if (doc.exists) {
+                            setGoogleCalendarId(doc.data().googleCalendarId);
+                        }
+                    });
                     
-                    // New subscription to all users for admin view
                     const allUsersUnsubscribe = db.collection('users').onSnapshot(snapshot => {
                         const users = snapshot.docs.map(doc => ({
                             id: doc.id,
@@ -266,33 +268,31 @@
                         unsubscribeUser();
                         unsubscribePublic();
                         allUsersUnsubscribe();
+                        unsubscribeSettings();
                     };
                 }
             }, [user]);
 
-            // New useEffect to handle checklist data
             useEffect(() => {
-                if (!user || authLoading) return; // Wait for user to be authenticated and auth loading to complete
+                if (!user || authLoading) return;
 
                 let query;
                 if (isAdmin) {
-                    // Admins can see all checklists using a collection group query
                     query = db.collectionGroup('checklists').orderBy('createdAt', 'asc');
                 } else {
-                    // Regular users only see their own checklist
                     query = db.collection('users').doc(user.uid).collection('checklists').orderBy('createdAt', 'asc');
                 }
                 
                 const unsubscribe = query.onSnapshot(snapshot => {
                     const items = snapshot.docs.map(doc => ({
                         id: doc.id,
-                        userId: doc.ref.parent.parent.id, // Get the user ID from the parent document
+                        userId: doc.ref.parent.parent.id,
                         ...doc.data()
                     }));
                     setChecklist(items);
                 });
                 return () => unsubscribe();
-            }, [user, isAdmin, authLoading]); // Added authLoading to dependencies
+            }, [user, isAdmin, authLoading]);
 
             const handleAddChecklistItem = async (text) => {
                 if (user && text.trim() !== '') {
@@ -307,7 +307,6 @@
             
             const handleUpdateChecklistItem = async (userId, itemId, completed) => {
                 if (user) {
-                    // Admins can update any item, regular users can only update their own
                     const itemRef = db.collection('users').doc(userId).collection('checklists').doc(itemId);
                     await itemRef.update({ completed });
                 }
@@ -315,7 +314,6 @@
             
             const handleDeleteChecklistItem = async (userId, itemId) => {
                 if (user) {
-                    // Admins can delete any item, regular users can only delete their own
                     const itemRef = db.collection('users').doc(userId).collection('checklists').doc(itemId);
                     await itemRef.delete();
                 }
@@ -332,7 +330,7 @@
                     });
                     if (data.customers) fetchedCustomers.push(...data.customers);
                     cursor = data.cursor;
-                    if (cursor) await delay(200); // Throttle requests
+                    if (cursor) await delay(200);
                 } while (cursor);
                 
                 const uniqueCustomers = Array.from(new Map(fetchedCustomers.map(customer => [customer.id, customer])).values());
@@ -382,7 +380,6 @@
                     if (cursor) await delay(200);
                 } while (cursor);
 
-                // Find last contact date for each customer
                 const lastContactDates = new Map();
                 for (const order of fetchedOrders) {
                     if (order.line_items && order.customer_id) {
@@ -396,7 +393,6 @@
                     }
                 }
 
-                // Attach last contact date to customer objects
                 const customersWithContactDates = allCustomers.map(customer => ({
                     ...customer,
                     last_sms_contact: lastContactDates.get(customer.id) || null
@@ -419,7 +415,6 @@
                 setAllOrders(flattenedItems);
             }, [squareAccessToken, allCustomers]);
 
-            // This useEffect fetches initial non-order data
             useEffect(() => {
                 if (squareAccessToken) {
                     const fetchAllCustomAttributeDefinitions = async () => {
@@ -432,7 +427,7 @@
                                 definitions.push(...data.custom_attribute_definitions);
                             }
                             cursor = data.cursor;
-                            if (cursor) await delay(200); // Throttle requests
+                            if (cursor) await delay(200);
                         } while (cursor);
                         return definitions;
                     };
@@ -456,7 +451,7 @@
                             const activeLocation = locationData.locations?.find(loc => loc.status === 'ACTIVE');
                             if (activeLocation) {
                                 setLocationId(activeLocation.id);
-                                await fetchAllCustomers(); // Fetch customers first
+                                await fetchAllCustomers();
                             } else {
                                 throw new Error("No active location found for this business.");
                             }
@@ -481,7 +476,6 @@
                 }
             }, [squareAccessToken, user, fetchAllCustomers]);
             
-            // This useEffect fetches order data once customers are loaded
             useEffect(() => {
                 if (allCustomers.length > 0 && locationId) {
                     fetchAllOrders(locationId);
@@ -490,10 +484,7 @@
             
             const handleUpdateCustomAttribute = async (customerId, attributeKey, value) => {
                 try {
-                    const payload = {
-                        custom_attribute: { value }
-                    };
-                    
+                    const payload = { custom_attribute: { value } };
                     const { custom_attribute } = await apiFetch(`/v2/customers/${customerId}/custom-attributes/${attributeKey}`, {
                         method: 'POST',
                         body: JSON.stringify(payload),
@@ -502,27 +493,13 @@
                     setAllCustomers(prevCustomers => 
                         prevCustomers.map(c => {
                             if (c.id === customerId) {
-                                return {
-                                    ...c,
-                                    custom_attributes: {
-                                        ...c.custom_attributes,
-                                        [attributeKey]: custom_attribute
-                                    },
-                                    version: custom_attribute.version
-                                };
+                                return { ...c, custom_attributes: { ...c.custom_attributes, [attributeKey]: custom_attribute }, version: custom_attribute.version };
                             }
                             return c;
                         })
                     );
 
-                    setCustomerDetails(prevDetails => ({ 
-                        ...prevDetails,
-                        custom_attributes: {
-                            ...prevDetails.custom_attributes,
-                            [attributeKey]: custom_attribute
-                        },
-                        version: custom_attribute.version
-                    }));
+                    setCustomerDetails(prevDetails => ({ ...prevDetails, custom_attributes: { ...prevDetails.custom_attributes, [attributeKey]: custom_attribute }, version: custom_attribute.version }));
 
                 } catch (err) {
                     console.error("Failed to update custom attribute:", err);
@@ -536,20 +513,10 @@
                         method: 'PUT',
                         body: JSON.stringify({ note }),
                     });
-
-                    // Update the main customer list
-                    setAllCustomers(prevCustomers =>
-                        prevCustomers.map(c => (c.id === customerId ? customer : c))
-                    );
-
-                    // Update the detailed view if it's the same customer
+                    setAllCustomers(prevCustomers => prevCustomers.map(c => (c.id === customerId ? customer : c)));
                     if (customerDetails && customerDetails.id === customerId) {
-                        setCustomerDetails(prevDetails => ({
-                            ...prevDetails,
-                            ...customer
-                        }));
+                        setCustomerDetails(prevDetails => ({ ...prevDetails, ...customer }));
                     }
-                    // Close the modal after successful save
                     setNoteEditorState({ isOpen: false, customer: null });
                 } catch (err) {
                     console.error("Failed to update note:", err);
@@ -563,37 +530,20 @@
                     return;
                 }
                 
-                const contactedMartinItemId = "376G3V4PU6H6VE6MEREUY3TD";
                 const orderPayload = {
                     idempotency_key: crypto.randomUUID(),
                     order: {
                         location_id: locationId,
                         customer_id: customerId,
-                        line_items: [{
-                            catalog_object_id: contactedMartinItemId,
-                            quantity: '1'
-                        }]
+                        line_items: [{ catalog_object_id: contactedMartinItemId, quantity: '1' }]
                     }
                 };
 
                 try {
-                    const orderData = await apiFetch('/v2/orders', {
-                        method: 'POST',
-                        body: JSON.stringify(orderPayload)
-                    });
-
-                    const payPayload = {
-                        idempotency_key: crypto.randomUUID(),
-                        payment_ids: []
-                    };
-                    await apiFetch(`/v2/orders/${orderData.order.id}/pay`, {
-                        method: 'POST',
-                        body: JSON.stringify(payPayload)
-                    });
-
+                    const orderData = await apiFetch('/v2/orders', { method: 'POST', body: JSON.stringify(orderPayload) });
+                    const payPayload = { idempotency_key: crypto.randomUUID(), payment_ids: [] };
+                    await apiFetch(`/v2/orders/${orderData.order.id}/pay`, { method: 'POST', body: JSON.stringify(payPayload) });
                     await delay(1000);
-
-                    // Re-fetch customer details to update UI and then trigger modal
                     handleSelectCustomer(selectedCustomer);
                     setPendingNoteEditOnLog(true);
 
@@ -611,8 +561,6 @@
                 setLoadingMessage('Fetching customer details...');
                 setError('');
                 
-                const contactedMartinItemId = "376G3V4PU6H6VE6MEREUY3TD";
-
                 const fetchDetails = async () => {
                     if (!locationId) {
                         setError("Location ID is not set. Cannot fetch orders.");
@@ -627,18 +575,15 @@
                         ]);
                         
                         const customerOrdersData = await apiFetch('/v2/orders/search', {
-                                method: 'POST',
-                                body: JSON.stringify({
-                                    location_ids: [locationId],
-                                    query: {
-                                        filter: {
-                                            customer_filter: { customer_ids: [customer.id] },
-                                            state_filter: { states: ["COMPLETED"] }
-                                        },
-                                        sort: { sort_field: "CLOSED_AT", sort_order: "DESC" }
-                                    }
-                                })
-                            });
+                            method: 'POST',
+                            body: JSON.stringify({
+                                location_ids: [locationId],
+                                query: {
+                                    filter: { customer_filter: { customer_ids: [customer.id] }, state_filter: { states: ["COMPLETED"] } },
+                                    sort: { sort_field: "CLOSED_AT", sort_order: "DESC" }
+                                }
+                            })
+                        });
                         
                         let lastSmsContactDate = null;
                         const allOrders = customerOrdersData.orders || [];
@@ -663,9 +608,7 @@
                                 return acc;
                             }, {})
                         };
-
                         setCustomerDetails(fullCustomerProfile);
-
                     } catch (err) {
                         setError(err.message);
                     } finally {
@@ -688,16 +631,10 @@
                             excludedValues: Array.from(filterConfig.excludedValues || []),
                         };
                         if (filterConfig.date_range) {
-                            serializedFilters[key].date_range = {
-                                startDate: filterConfig.date_range.startDate,
-                                endDate: filterConfig.date_range.endDate
-                            };
+                            serializedFilters[key].date_range = { startDate: filterConfig.date_range.startDate, endDate: filterConfig.date_range.endDate };
                         }
                         if (filterConfig.excluded_date_range) {
-                            serializedFilters[key].excluded_date_range = {
-                                startDate: filterConfig.excluded_date_range.startDate,
-                                endDate: filterConfig.excluded_date_range.endDate
-                            };
+                            serializedFilters[key].excluded_date_range = { startDate: filterConfig.excluded_date_range.startDate, endDate: filterConfig.excluded_date_range.endDate };
                         }
                     }
                 }
@@ -713,9 +650,7 @@
                 if (isShared) {
                     const publicReportsDocRef = db.collection('public').doc('reports');
                     try {
-                         await publicReportsDocRef.update({
-                            allReports: firebase.firestore.FieldValue.arrayUnion(serializedReport)
-                        });
+                         await publicReportsDocRef.update({ allReports: firebase.firestore.FieldValue.arrayUnion(serializedReport) });
                     } catch (err) {
                         if (err.code === 'not-found') {
                             await publicReportsDocRef.set({ allReports: [serializedReport] });
@@ -726,9 +661,7 @@
                     }
                 } else {
                     const userDocRef = db.collection('users').doc(user.uid);
-                    await userDocRef.update({
-                        savedReports: firebase.firestore.FieldValue.arrayUnion(serializedReport)
-                    });
+                    await userDocRef.update({ savedReports: firebase.firestore.FieldValue.arrayUnion(serializedReport) });
                 }
             };
             
@@ -736,20 +669,12 @@
                 const serializedReport = serializeReport(updatedReport);
                 if (updatedReport.isPersonal) {
                     const userDocRef = db.collection('users').doc(user.uid);
-                    const updatedPersonalReports = personalReports.map(r => 
-                        r.id === updatedReport.id ? updatedReport : r
-                    );
-                    await userDocRef.update({ 
-                        savedReports: updatedPersonalReports.map(serializeReport) 
-                    });
+                    const updatedPersonalReports = personalReports.map(r => r.id === updatedReport.id ? updatedReport : r);
+                    await userDocRef.update({ savedReports: updatedPersonalReports.map(serializeReport) });
                 } else {
                     const publicReportsDocRef = db.collection('public').doc('reports');
-                    const updatedPublicReports = publicReports.map(r => 
-                        r.id === updatedReport.id ? updatedReport : r
-                    );
-                    await publicReportsDocRef.set({ 
-                        allReports: updatedPublicReports.map(serializeReport) 
-                    });
+                    const updatedPublicReports = publicReports.map(r => r.id === updatedReport.id ? updatedReport : r);
+                    await publicReportsDocRef.set({ allReports: updatedPublicReports.map(serializeReport) });
                 }
             };
 
@@ -768,9 +693,7 @@
                     if (doc.exists) {
                         const currentReports = doc.data().allReports || [];
                         const updatedReports = currentReports.filter(r => r.id !== reportId);
-                        await publicReportsDocRef.update({
-                            allReports: updatedReports
-                        });
+                        await publicReportsDocRef.update({ allReports: updatedReports });
                     }
                 }
             };
@@ -821,7 +744,7 @@
                         return <AdminPage allUsers={allUsers} onBack={() => setCurrentView('dashboard')} />;
                     case 'dashboard':
                     default:
-                        return <Dashboard onNavigate={handleNavigate} widgets={widgets} allCustomers={allCustomers} allOrders={allOrders} groupsMap={groupsMap} segmentsMap={segmentsMap} onSelectCustomer={handleSelectCustomer} totalCustomers={allCustomers.length} />;
+                        return <Dashboard onNavigate={handleNavigate} widgets={widgets} allCustomers={allCustomers} allOrders={allOrders} groupsMap={groupsMap} segmentsMap={segmentsMap} onSelectCustomer={handleSelectCustomer} totalCustomers={allCustomers.length} googleCalendarId={googleCalendarId} />;
                 }
             };
 
@@ -922,7 +845,7 @@
             );
         }
 
-        function Dashboard({ onNavigate, widgets, allCustomers, allOrders, groupsMap, segmentsMap, onSelectCustomer }) {
+        function Dashboard({ onNavigate, widgets, allCustomers, allOrders, groupsMap, segmentsMap, onSelectCustomer, googleCalendarId }) {
             const handleWidgetClick = (widget) => {
                 onNavigate('reports', widget);
             };
@@ -931,6 +854,12 @@
                     <h2 className="text-4xl font-bold text-gray-800 dark:text-gray-200">Dashboard</h2>
                     <p className="text-gray-500 dark:text-gray-400">Welcome to your Social Medium CRM.</p>
                     
+                    {googleCalendarId && (
+                        <div className="mt-8">
+                           <CalendarWidget calendarId={googleCalendarId} />
+                        </div>
+                    )}
+
                     <div className="mt-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                         <button onClick={() => onNavigate('directory')} className="p-6 bg-white dark:bg-gray-800 rounded-lg shadow hover:bg-cyan-50 dark:hover:bg-gray-700 text-left transition">
                             <h3 className="text-xl font-semibold text-gray-800 dark:text-gray-200">Directory</h3>
@@ -952,6 +881,23 @@
                             />
                         ))}
                     </div>
+                </div>
+            );
+        }
+
+        function CalendarWidget({ calendarId }) {
+            const calendarSrc = `https://calendar.google.com/calendar/embed?src=${encodeURIComponent(calendarId)}&mode=AGENDA&ctz=America/Los_Angeles`;
+            return (
+                <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
+                    <h3 className="text-xl font-semibold text-gray-800 dark:text-gray-200 mb-4">Upcoming Events</h3>
+                    <iframe 
+                        src={calendarSrc} 
+                        style={{ borderWidth: 0 }} 
+                        width="100%" 
+                        height="400" 
+                        frameBorder="0" 
+                        scrolling="no"
+                    ></iframe>
                 </div>
             );
         }
@@ -1195,9 +1141,7 @@
                     { key: 'phone_number', label: 'Phone', visible: true, path: ['phone_number'] },
                     { key: 'created_at', label: 'Customer Since', visible: true, path: ['created_at'] },
                     { key: 'groups', label: 'Groups & Segments', visible: true, path: [] },
-                    // New field for Last Contact Date
                     { key: 'last_sms_contact', label: 'Last Contact Date', visible: true, path: ['last_sms_contact'] },
-                    // New field for Notes
                     { key: 'note', label: 'Notes', visible: true, path: ['note'] },
                 ];
                 return [...standardFields];
@@ -1213,9 +1157,7 @@
                     { key: 'line_item_name', label: 'Line Item', visible: true, path: ['line_item_name'] },
                     { key: 'quantity', label: 'Quantity', visible: true, path: ['quantity'] },
                     { key: 'purchase_date', label: 'Purchase Date', visible: true, path: ['purchase_date'] },
-                    // New field for Last Contact Date on the item report
                     { key: 'last_sms_contact', label: 'Last Contact Date', visible: true, path: ['customer', 'last_sms_contact'] },
-                    // New field for Notes on the item report
                     { key: 'note', label: 'Notes', visible: true, path: ['customer', 'note'] },
                 ];
             }, []);
@@ -1230,30 +1172,17 @@
 
             const visibleFields = useMemo(() => fields.filter(c => c.visible), [fields]);
             
-            // Map customers by ID for quick lookup
             const customerMap = useMemo(() => {
                 const map = new Map();
-                (allCustomers || []).forEach(c => {
-                    map.set(c.id, c);
-                    if (c.note) {
-                    } else {
-                        // console.log(`[DEBUG-MAP] No note for customer ID ${c.id}`);
-                    }
-                });
+                (allCustomers || []).forEach(c => map.set(c.id, c));
                 return map;
             }, [allCustomers]);
             
             const enrichedOrders = useMemo(() => {
-                return (allOrders || []).map(order => {
-                    const customer = customerMap.get(order.customer_id) || {};
-                    const enrichedOrder = {
-                        ...order,
-                        customer: customer
-                    };
-                    if (enrichedOrder.customer.note) {
-                    }
-                    return enrichedOrder;
-                });
+                return (allOrders || []).map(order => ({
+                    ...order,
+                    customer: customerMap.get(order.customer_id) || {}
+                }));
             }, [allOrders, customerMap, refreshReportTrigger]);
 
             const dataToDisplay = reportType === 'customer' ? (allCustomers || []) : enrichedOrders;
@@ -1261,7 +1190,6 @@
             const filteredAndSortedData = useMemo(() => {
                 let data = [...dataToDisplay];
                 
-                // Apply field filters
                 data = data.filter(row => {
                     return Object.entries(fieldFilters).every(([key, filterConfig]) => {
                         if (!filterConfig) return true;
@@ -1269,9 +1197,8 @@
                         const field = fields.find(c => c.key === key);
                         if (!field) return true;
                         
-                        // Special handling for the 'groups' field
                         if (field.key === 'groups') {
-                            const customer = row; // In customer report, the row is the customer
+                            const customer = row;
                             const groupNames = (customer.group_ids || []).map(id => groupsMap.get(id));
                             const segmentNames = (customer.segment_ids || []).map(id => segmentsMap.get(id));
                             const customerGroups = new Set([...groupNames, ...segmentNames].filter(Boolean));
@@ -1283,24 +1210,18 @@
 
                             let matchesIncluded = !included;
                             if (included) {
-                                if (filterConfig.mode === 'all') {
-                                    matchesIncluded = Array.from(filterConfig.values).every(v => customerGroups.has(v));
-                                } else {
-                                    matchesIncluded = Array.from(filterConfig.values).some(v => customerGroups.has(v));
-                                }
+                                matchesIncluded = filterConfig.mode === 'all' 
+                                    ? Array.from(filterConfig.values).every(v => customerGroups.has(v))
+                                    : Array.from(filterConfig.values).some(v => customerGroups.has(v));
                             }
 
-                            let matchesExcluded = false;
-                            if (excluded) {
-                                matchesExcluded = Array.from(filterConfig.excludedValues).some(v => customerGroups.has(v));
-                            }
+                            let matchesExcluded = excluded ? Array.from(filterConfig.excludedValues).some(v => customerGroups.has(v)) : false;
                             
                             return matchesIncluded && !matchesExcluded;
                         }
 
                         let value = getNestedValue(row, field.path);
                         if (field.path && (field.path.includes('created_at') || field.path.includes('purchase_date') || field.key === 'last_sms_contact')) {
-                             // Handle date filters
                             const rowDate = value ? new Date(value) : null;
                             
                             let includedRange = filterConfig.date_range;
@@ -1321,7 +1242,7 @@
                                 }
                                 const excludedStartDate = excludedRange.startDate ? new Date(excludedRange.startDate) : null;
                                 const excludedEndDate = excludedRange.endDate ? new Date(excludedRange.endDate) : null;
-                                isExcluded = (!excludedStartDate || rowDate >= excludedStartDate) && (!excludedEndDate || rowDate <= excludedEndDate);
+                                isExcluded = rowDate && (!excludedStartDate || rowDate >= excludedStartDate) && (!excludedEndDate || rowDate <= excludedEndDate);
                             }
                             
                             return matchesDateRange && !isExcluded;
@@ -1381,19 +1302,7 @@
             }, [dataToDisplay, fieldFilters, sortConfig, fields, groupsMap, segmentsMap, refreshReportTrigger]);
             
             const handleModalSave = (name, isWidget, isShared, targetMin, targetMax, targetType, reverseRange) => {
-                const report = { 
-                    name, 
-                    filters: fieldFilters, 
-                    sortConfig, 
-                    fields, 
-                    isWidget, 
-                    isShared,
-                    reportType, // Save the report type
-                    targetMin: parseInt(targetMin, 10) || null,
-                    targetMax: parseInt(targetMax, 10) || null,
-                    targetType,
-                    reverseRange
-                };
+                const report = { name, filters: fieldFilters, sortConfig, fields, isWidget, isShared, reportType, targetMin: parseInt(targetMin, 10) || null, targetMax: parseInt(targetMax, 10) || null, targetType, reverseRange };
                 onSaveReport(report, isWidget, isShared);
                 setIsSaveModalOpen(false);
             };
@@ -1436,31 +1345,13 @@
 
             return (
                 <div className="flex h-full">
-                    <ReportsSidebar 
-                        fields={fields} 
-                        setFields={setFields}
-                        savedReports={savedReports}
-                        onLoadReport={handleLoadReport}
-                        onSaveReportClick={() => setIsSaveModalOpen(true)}
-                        onUpdateReport={onUpdateReport}
-                        onDeleteReport={onDeleteReport}
-                    />
+                    <ReportsSidebar fields={fields} setFields={setFields} savedReports={savedReports} onLoadReport={handleLoadReport} onSaveReportClick={() => setIsSaveModalOpen(true)} onUpdateReport={onUpdateReport} onDeleteReport={onDeleteReport} />
                     <div className="flex-1 p-8 overflow-y-auto">
                         <div className="flex justify-between items-center mb-6">
                             <button onClick={onBack} className="text-cyan-600 dark:text-cyan-400 hover:text-cyan-800 dark:hover:text-cyan-200"> &larr; Back to Dashboard</button>
                             <div className="flex space-x-2 rounded-md shadow-sm" role="group">
-                                <button
-                                    type="button"
-                                    onClick={() => handleReportTypeChange('customer')}
-                                    className={`px-4 py-2 text-sm font-medium ${reportType === 'customer' ? 'bg-cyan-600 text-white' : 'bg-white text-gray-900 border border-gray-200'} rounded-l-md hover:bg-gray-100 dark:bg-gray-700 dark:border-gray-600 dark:text-white dark:hover:text-white dark:hover:bg-gray-600`}>
-                                    Customer Report
-                                </button>
-                                <button
-                                    type="button"
-                                    onClick={() => handleReportTypeChange('item')}
-                                    className={`px-4 py-2 text-sm font-medium ${reportType === 'item' ? 'bg-cyan-600 text-white' : 'bg-white text-gray-900 border border-gray-200'} rounded-r-md hover:bg-gray-100 dark:bg-gray-700 dark:border-gray-600 dark:text-white dark:hover:text-white dark:hover:bg-gray-600`}>
-                                    Item Report
-                                </button>
+                                <button type="button" onClick={() => handleReportTypeChange('customer')} className={`px-4 py-2 text-sm font-medium ${reportType === 'customer' ? 'bg-cyan-600 text-white' : 'bg-white text-gray-900 border border-gray-200'} rounded-l-md hover:bg-gray-100 dark:bg-gray-700 dark:border-gray-600 dark:text-white dark:hover:text-white dark:hover:bg-gray-600`}>Customer Report</button>
+                                <button type="button" onClick={() => handleReportTypeChange('item')} className={`px-4 py-2 text-sm font-medium ${reportType === 'item' ? 'bg-cyan-600 text-white' : 'bg-white text-gray-900 border border-gray-200'} rounded-r-md hover:bg-gray-100 dark:bg-gray-700 dark:border-gray-600 dark:text-white dark:hover:text-white dark:hover:bg-gray-600`}>Item Report</button>
                             </div>
                             <button onClick={handleLocalRefresh} className="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded-md text-sm font-medium hover:bg-gray-300 dark:hover:bg-gray-600 transition">Refresh Report</button>
                             <span className="text-gray-600 dark:text-gray-300 font-semibold">{filteredAndSortedData.length} {reportType === 'customer' ? 'Customers' : 'Items'}</span>
@@ -1469,7 +1360,7 @@
                         <div className="mt-8 bg-white dark:bg-gray-800 rounded-lg shadow overflow-x-auto">
                             <table className="w-full text-sm text-left text-gray-500 dark:text-gray-400">
                                 <thead className="text-xs text-gray-700 dark:text-gray-400 uppercase bg-gray-50 dark:bg-gray-700">
-                                    <tr>{visibleFields.map(field => <SortableHeader key={field.key} field={field} setSortConfig={setSortConfig} sortConfig={sortConfig} setActiveFilterPopup={setActiveFieldFilterPopup} filters={fieldFilters} reportType={reportType} allOrders={allOrders} allCustomers={allCustomers} groupsMap={groupsMap} segmentsMap={segmentsMap} />)}</tr>
+                                    <tr>{visibleFields.map(field => <SortableHeader key={field.key} field={field} setSortConfig={setSortConfig} sortConfig={sortConfig} setActiveFilterPopup={setActiveFieldFilterPopup} filters={fieldFilters} />)}</tr>
                                 </thead>
                                 <tbody>
                                     {filteredAndSortedData.length === 0 && <tr><td colSpan={visibleFields.length} className="text-center p-4 text-gray-500 dark:text-gray-400">No customers match the current filters.</td></tr>}
@@ -1481,15 +1372,12 @@
                                                 
                                                 if (reportType === 'customer') {
                                                     const customer = row;
-                                                    if (field.key === 'customer_id') {
-                                                        cellContent = customer.id || 'N/A';
-                                                    } else if (field.key === 'given_name') {
+                                                    if (field.key === 'given_name') {
                                                         cellContent = <button onClick={() => onSelectCustomer(customer)} className="text-cyan-600 dark:text-cyan-400 hover:underline font-medium whitespace-nowrap">{customer.given_name || ''}</button>;
                                                     } else if (field.key === 'groups') {
                                                         const groupNames = (customer.group_ids || []).map(id => ({ name: groupsMap.get(id) || id, color: 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300' }));
                                                         const segmentNames = (customer.segment_ids || []).map(id => ({ name: segmentsMap.get(id) || id, color: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300' }));
-                                                        const allPills = [...groupNames, ...segmentNames];
-                                                        cellContent = <div className="flex flex-wrap gap-1">{allPills.map((pill, i) => <Pill key={i} text={pill.name} color={pill.color} />)}</div>;
+                                                        cellContent = <div className="flex flex-wrap gap-1">{[...groupNames, ...segmentNames].map((pill, i) => <Pill key={i} text={pill.name} color={pill.color} />)}</div>;
                                                     } else if (field.key === 'last_sms_contact') {
                                                         cellContent = formatSimpleDate(getNestedValue(customer, field.path));
                                                     } else if (field.key === 'note') {
@@ -1502,24 +1390,8 @@
                                                     const customer = row.customer;
                                                     const customerExists = customer && Object.keys(customer).length > 0;
                                                     
-                                                    if (field.key === 'customer_id') {
-                                                        cellContent = row.customer_id || 'N/A';
-                                                    } else if (field.key === 'given_name') {
+                                                    if (field.key === 'given_name') {
                                                         cellContent = customerExists ? <button onClick={() => onSelectCustomer(customer)} className="text-cyan-600 dark:text-cyan-400 hover:underline font-medium whitespace-nowrap">{customer.given_name || ''}</button> : 'N/A';
-                                                    } else if (field.key === 'family_name') {
-                                                        cellContent = customerExists ? customer.family_name || 'N/A' : 'N/A';
-                                                    } else if (field.key === 'email_address') {
-                                                        cellContent = customerExists ? customer.email_address || 'N/A' : 'N/A';
-                                                    } else if (field.key === 'phone_number') {
-                                                        cellContent = customerExists ? customer.phone_number || 'N/A' : 'N/A';
-                                                    } else if (field.key === 'line_item_name') {
-                                                        cellContent = row.line_item_name || 'N/A';
-                                                    } else if (field.key === 'quantity') {
-                                                        cellContent = row.quantity;
-                                                    } else if (field.key === 'purchase_date') {
-                                                        cellContent = formatSimpleDate(getNestedValue(row, field.path));
-                                                    } else if (field.key === 'last_sms_contact') {
-                                                        cellContent = customerExists ? formatSimpleDate(getNestedValue(row, field.path)) : 'N/A';
                                                     } else if (field.key === 'note') {
                                                         cellContent = customerExists ? getNestedValue(row, field.path) || 'N/A' : 'N/A';
                                                         cellClassName = "px-6 py-4 whitespace-normal max-w-xs";
@@ -1536,7 +1408,7 @@
                             </table>
                         </div>
                     </div>
-                    {activeFieldFilterPopup && <FilterPopup field={activeFieldFilterPopup} dataSource={dataToDisplay} filters={fieldFilters} setFilters={setFieldFilters} onClose={() => setActiveFieldFilterPopup(null)} getNestedValue={getNestedValue} groupsMap={groupsMap} segmentsMap={segmentsMap} reportType={reportType} />}
+                    {activeFieldFilterPopup && <FilterPopup field={activeFieldFilterPopup} dataSource={dataToDisplay} filters={fieldFilters} setFilters={setFieldFilters} onClose={() => setActiveFieldFilterPopup(null)} getNestedValue={getNestedValue} groupsMap={groupsMap} segmentsMap={segmentsMap} />}
                     {isSaveModalOpen && <SaveReportModal onSave={handleModalSave} onCancel={() => setIsSaveModalOpen(false)} />}
                 </div>
             );
@@ -1544,15 +1416,12 @@
         
         // --- Standalone Components ---
         
-        const SortableHeader = ({ field, setSortConfig, sortConfig, setActiveFilterPopup, filters, reportType, allOrders, allCustomers, groupsMap, segmentsMap }) => {
+        const SortableHeader = ({ field, setSortConfig, sortConfig, setActiveFilterPopup, filters }) => {
             const isSorted = sortConfig.key === field.key;
             const isFiltered = filters[field.key] && (filters[field.key].values?.size > 0 || filters[field.key].date_range || filters[field.key].relative_date_range);
-            const isDateFilter = field.key === 'created_at' || field.key === 'purchase_date' || field.key === 'last_sms_contact';
-
+            
             let headerClassName = "px-6 py-3";
-            if (field.key === 'note') {
-                headerClassName += " max-w-xs";
-            }
+            if (field.key === 'note') headerClassName += " max-w-xs";
             
             return (
                 <th scope="col" className={headerClassName}>
@@ -1569,7 +1438,7 @@
             );
         };
 
-        function FilterPopup({ field, dataSource, filters, setFilters, onClose, getNestedValue, groupsMap, segmentsMap, reportType }) {
+        function FilterPopup({ field, dataSource, filters, setFilters, onClose, getNestedValue, groupsMap, segmentsMap }) {
             const isDateField = field.key === 'created_at' || field.key === 'purchase_date' || field.key === 'last_sms_contact';
 
             const getFieldValues = () => {
@@ -1663,7 +1532,7 @@
                         if (excludedRelativePeriod && excludedRelativeUnit) {
                             newFilter.excluded_relative_date_range = `${excludedRelativePeriod} ${excludedRelativeUnit}`;
                         }
-                    } else { // Custom date mode
+                    } else {
                         if (dateRange.startDate || dateRange.endDate) {
                             newFilter.date_range = dateRange;
                         }
@@ -1868,9 +1737,7 @@
                                     </button>
                                     <div className="hidden group-hover:flex items-center flex-shrink-0">
                                         <button onClick={() => setReportToEdit(r)} className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded text-xs">✏️</button>
-                                        <button onClick={() => {
-                                            setDeleteModal(r);
-                                        }} className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded text-xs">🗑️</button>
+                                        <button onClick={() => setDeleteModal(r)} className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded text-xs">🗑️</button>
                                     </div>
                                 </div>
                             ))}
@@ -1987,23 +1854,39 @@
         
         function AdminPage({ allUsers, onBack }) {
             const [searchTerm, setSearchTerm] = useState('');
+            const [calendarIdInput, setCalendarIdInput] = useState('');
             
-            // Filter users based on search term
+            useEffect(() => {
+                const settingsDocRef = db.collection('public').doc('settings');
+                settingsDocRef.get().then(doc => {
+                    if (doc.exists) {
+                        setCalendarIdInput(doc.data().googleCalendarId || '');
+                    }
+                });
+            }, []);
+            
             const filteredUsers = useMemo(() => {
                 const lowercasedTerm = searchTerm.toLowerCase();
                 if (!lowercasedTerm) return allUsers;
                 return allUsers.filter(user => 
                     (user.email && user.email.toLowerCase().includes(lowercasedTerm)) ||
-                    (user.uid && user.uid.toLowerCase().includes(lowercasedTerm))
+                    (user.id && user.id.toLowerCase().includes(lowercasedTerm))
                 );
             }, [searchTerm, allUsers]);
 
             const handleDeleteUser = (userId) => {
-                // IMPORTANT: In a production app, you would not delete users from the client.
-                // You would trigger a Firebase Cloud Function to handle the deletion securely on the server.
-                // This prevents exposing any administrator credentials and ensures all associated data (like their
-                // user document, private checklists, etc.) are deleted cleanly.
                 alert(`The user deletion for ${userId} would be handled by a secure backend function.`);
+            };
+
+            const handleSaveCalendarId = async () => {
+                const settingsDocRef = db.collection('public').doc('settings');
+                try {
+                    await settingsDocRef.set({ googleCalendarId: calendarIdInput }, { merge: true });
+                    alert('Google Calendar ID saved successfully!');
+                } catch (error) {
+                    console.error("Error saving calendar ID:", error);
+                    alert('Failed to save calendar ID.');
+                }
             };
 
             return (
@@ -2012,7 +1895,24 @@
                     <h2 className="text-4xl font-bold text-gray-800 dark:text-gray-200">Admin Panel</h2>
                     <p className="text-gray-500 dark:text-gray-400 mt-2">Manage user accounts and data.</p>
                     
-                    <div className="mt-4">
+                    <div className="mt-8 bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+                        <h3 className="text-xl font-semibold text-gray-800 dark:text-gray-200">Settings</h3>
+                        <div className="mt-4">
+                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Public Google Calendar ID</label>
+                            <div className="flex items-center space-x-2 mt-1">
+                                <input 
+                                    type="text" 
+                                    value={calendarIdInput} 
+                                    onChange={e => setCalendarIdInput(e.target.value)} 
+                                    placeholder="your-calendar-id@group.calendar.google.com" 
+                                    className="flex-grow w-full px-3 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                                />
+                                <button onClick={handleSaveCalendarId} className="px-4 py-2 bg-cyan-600 text-white rounded-md hover:bg-cyan-700">Save</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="mt-8">
                         <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Filter users by email or ID..." className="w-full max-w-lg px-4 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"/>
                     </div>
                     
@@ -2039,7 +1939,6 @@
         function ChecklistPage({ checklist, onAdd, onUpdate, onDelete, onBack, isAdmin, allUsers }) {
             const [newItemText, setNewItemText] = useState('');
             
-            // Create a map of user IDs to emails for display
             const userEmailsMap = useMemo(() => {
                 const map = new Map();
                 allUsers.forEach(user => {
