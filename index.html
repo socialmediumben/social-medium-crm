@@ -278,19 +278,35 @@
 
                 let query;
                 if (isAdmin) {
-                    query = db.collectionGroup('checklists').orderBy('createdAt', 'asc');
+                    // No longer ordering by 'createdAt' here to avoid needing the composite index
+                    query = db.collectionGroup('checklists');
                 } else {
+                    // This query for individual users is fine and doesn't need a special index
                     query = db.collection('users').doc(user.uid).collection('checklists').orderBy('createdAt', 'asc');
                 }
                 
                 const unsubscribe = query.onSnapshot(snapshot => {
-                    const items = snapshot.docs.map(doc => ({
+                    let items = snapshot.docs.map(doc => ({
                         id: doc.id,
                         userId: doc.ref.parent.parent.id,
                         ...doc.data()
                     }));
+
+                    // If it's the admin view, sort the combined results on the client-side
+                    if (isAdmin) {
+                        items.sort((a, b) => {
+                            const dateA = a.createdAt?.toDate() || new Date(0);
+                            const dateB = b.createdAt?.toDate() || new Date(0);
+                            return dateA - dateB; // Sort ascending
+                        });
+                    }
+                    
                     setChecklist(items);
+                }, error => {
+                    console.error("Error fetching checklist:", error);
+                    setError("Could not load the checklist due to a database error.");
                 });
+
                 return () => unsubscribe();
             }, [user, isAdmin, authLoading]);
 
