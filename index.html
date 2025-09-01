@@ -153,6 +153,9 @@
             const [reportToLoad, setReportToLoad] = useState(null);
             const [selectedCustomer, setSelectedCustomer] = useState(null);
             const [customerDetails, setCustomerDetails] = useState(null);
+            const [noteEditorState, setNoteEditorState] = useState({ isOpen: false, customer: null });
+            const [pendingNoteEditOnLog, setPendingNoteEditOnLog] = useState(false);
+
 
             const API_PROXY_URL = 'https://square-checkin-backend.onrender.com';
             // Item ID for 'Contacted (Martin)'
@@ -166,6 +169,14 @@
                 }
                 localStorage.setItem('theme', theme);
             }, [theme]);
+
+            // Effect to trigger note editor modal after data refresh from log contact
+            useEffect(() => {
+                if (pendingNoteEditOnLog && customerDetails) {
+                    setNoteEditorState({ isOpen: true, customer: customerDetails });
+                    setPendingNoteEditOnLog(false); // Reset the flag
+                }
+            }, [customerDetails, pendingNoteEditOnLog]);
 
             const toggleTheme = () => {
                 setTheme(prevTheme => prevTheme === 'light' ? 'dark' : 'light');
@@ -538,6 +549,8 @@
                             ...customer
                         }));
                     }
+                    // Close the modal after successful save
+                    setNoteEditorState({ isOpen: false, customer: null });
                 } catch (err) {
                     console.error("Failed to update note:", err);
                     setError("Could not update note. Please try again.");
@@ -550,9 +563,7 @@
                     return;
                 }
                 
-                // The item ID for "Contacted (Martin)"
                 const contactedMartinItemId = "376G3V4PU6H6VE6MEREUY3TD";
-
                 const orderPayload = {
                     idempotency_key: crypto.randomUUID(),
                     order: {
@@ -566,13 +577,11 @@
                 };
 
                 try {
-                    // Create the order
                     const orderData = await apiFetch('/v2/orders', {
                         method: 'POST',
                         body: JSON.stringify(orderPayload)
                     });
 
-                    // Pay for the order (since it's a zero-dollar item)
                     const payPayload = {
                         idempotency_key: crypto.randomUUID(),
                         payment_ids: []
@@ -582,11 +591,11 @@
                         body: JSON.stringify(payPayload)
                     });
 
-                    // Add a small delay to ensure the new order is available
                     await delay(1000);
 
-                    // Re-fetch customer details to update the 'Last SMS Contact' field
+                    // Re-fetch customer details to update UI and then trigger modal
                     handleSelectCustomer(selectedCustomer);
+                    setPendingNoteEditOnLog(true);
 
                 } catch (err) {
                     console.error("Failed to log contact:", err);
@@ -602,7 +611,6 @@
                 setLoadingMessage('Fetching customer details...');
                 setError('');
                 
-                // Define the item ID for 'Contacted (Martin)'
                 const contactedMartinItemId = "376G3V4PU6H6VE6MEREUY3TD";
 
                 const fetchDetails = async () => {
@@ -618,7 +626,6 @@
                             apiFetch(`/v2/customers/${customer.id}/custom-attributes`)
                         ]);
                         
-                        // Fetch orders for the specific customer, sorted by creation date descending
                         const customerOrdersData = await apiFetch('/v2/orders/search', {
                                 method: 'POST',
                                 body: JSON.stringify({
@@ -636,13 +643,12 @@
                         let lastSmsContactDate = null;
                         const allOrders = customerOrdersData.orders || [];
                         
-                        // Find the most recent 'Contacted (Martin)' order
                         for (const order of allOrders) {
                             if (order.line_items) {
                                 const contactItem = order.line_items.find(item => item.catalog_object_id === contactedMartinItemId);
                                 if (contactItem) {
                                     lastSmsContactDate = order.closed_at;
-                                    break; // Found the most recent one, so we can stop
+                                    break;
                                 }
                             }
                         }
@@ -804,7 +810,7 @@
 
                 switch(currentView) {
                     case 'profile':
-                        return customerDetails ? <CustomerProfile customer={customerDetails} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} onBack={() => setCurrentView('directory')} onLogContact={handleLogContact} onUpdateNote={handleUpdateNote} /> : <div className="flex justify-center items-center h-full"><div className="spinner"></div></div>;
+                        return customerDetails ? <CustomerProfile customer={customerDetails} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} onBack={() => setCurrentView('directory')} onLogContact={handleLogContact} onEditNoteRequest={() => setNoteEditorState({ isOpen: true, customer: customerDetails })} /> : <div className="flex justify-center items-center h-full"><div className="spinner"></div></div>;
                     case 'reports':
                         return <ReportsPage allCustomers={allCustomers} allOrders={allOrders} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} onSelectCustomer={handleSelectCustomer} onBack={() => setCurrentView('dashboard')} savedReports={combinedReports} onSaveReport={handleSaveReport} onUpdateReport={handleUpdateReport} onDeleteReport={handleDeleteReport} initialReport={reportToLoad} onInitialReportLoaded={() => setReportToLoad(null)} totalCustomers={allCustomers.length} />;
                     case 'directory':
@@ -825,6 +831,13 @@
                     <main className="flex-1 overflow-y-auto bg-gray-100 dark:bg-gray-800">
                         {renderMainContent()}
                     </main>
+                     {noteEditorState.isOpen && (
+                        <NoteEditorModal
+                            customer={noteEditorState.customer}
+                            onSave={handleUpdateNote}
+                            onCancel={() => setNoteEditorState({ isOpen: false, customer: null })}
+                        />
+                    )}
                 </div>
             );
         }
@@ -2089,36 +2102,16 @@
             );
         }
 
-
-        function CustomerProfile({ customer, groupsMap, segmentsMap, onBack, onLogContact, customAttrDefs, onUpdateNote }) {
-            const [isEditingNote, setIsEditingNote] = useState(false);
-            const [noteText, setNoteText] = useState(customer.note || '');
-
-            useEffect(() => {
-                setNoteText(customer.note || '');
-            }, [customer.note]);
-
-            const handleSaveNote = () => {
-                onUpdateNote(customer.id, noteText);
-                setIsEditingNote(false);
-            };
-
-            const handleCancelEditNote = () => {
-                setNoteText(customer.note || '');
-                setIsEditingNote(false);
-            };
-
+        function CustomerProfile({ customer, groupsMap, segmentsMap, onBack, onLogContact, customAttrDefs, onEditNoteRequest }) {
+            
             const formatAddress = (address) => {
                 if (!address) return 'N/A';
                 const parts = [ address.address_line_1, address.address_line_2, `${address.locality || ''} ${address.administrative_district_level_1 || ''} ${address.postal_code || ''}`.trim(), address.country ];
                 return parts.filter(Boolean).join(', ');
             };
             
-            // The last_sms_contact property is now set in the parent component
             const lastSmsContact = customer.last_sms_contact;
 
-            // Note: The custom attributes for 'Last SMS Contact' are no longer used.
-            // Organize custom attributes for display
             const booleanAttributes = { true: [], false: [] };
             const otherAttributes = [];
             Array.from(customer.custom_attributes ? Object.values(customer.custom_attributes) : []).forEach(attr => {
@@ -2168,24 +2161,8 @@
                                 </div>
                             </InfoCard>
                             <InfoCard title="Notes" className="md:col-span-3">
-                                {!isEditingNote ? (
-                                    <>
-                                        <p className="text-gray-800 dark:text-gray-300 whitespace-pre-wrap">{customer.note || 'N/A'}</p>
-                                        <button onClick={() => setIsEditingNote(true)} className="mt-2 px-3 py-1 bg-gray-200 dark:bg-gray-700 text-sm rounded-md hover:bg-gray-300 dark:hover:bg-gray-600">Edit</button>
-                                    </>
-                                ) : (
-                                    <>
-                                        <textarea
-                                            value={noteText}
-                                            onChange={(e) => setNoteText(e.target.value)}
-                                            className="w-full h-24 p-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                                        />
-                                        <div className="flex justify-end space-x-2 mt-2">
-                                            <button onClick={handleCancelEditNote} className="px-4 py-2 bg-gray-200 dark:bg-gray-600 rounded-md">Cancel</button>
-                                            <button onClick={handleSaveNote} className="px-4 py-2 bg-cyan-600 text-white rounded-md">Save</button>
-                                        </div>
-                                    </>
-                                )}
+                                <p className="text-gray-800 dark:text-gray-300 whitespace-pre-wrap">{customer.note || 'N/A'}</p>
+                                <button onClick={onEditNoteRequest} className="mt-2 px-3 py-1 bg-gray-200 dark:bg-gray-700 text-sm rounded-md hover:bg-gray-300 dark:hover:bg-gray-600">Edit</button>
                             </InfoCard>
                             <InfoCard title="Custom Fields" className="md:col-span-3">
                                 <div className="grid grid-cols-2 gap-x-8">
@@ -2254,6 +2231,36 @@
                 {isOpen && <div className="mt-2 space-y-2 pl-2 border-l-2 border-gray-200 dark:border-gray-700">{children}</div>}
             </div>
         );
+
+        function NoteEditorModal({ customer, onSave, onCancel }) {
+            const [noteText, setNoteText] = useState(customer.note || '');
+
+            useEffect(() => {
+                setNoteText(customer.note || '');
+            }, [customer]);
+
+            const handleSave = () => {
+                onSave(customer.id, noteText);
+            };
+
+            return (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-40">
+                    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-lg">
+                        <h3 className="font-bold text-lg dark:text-gray-200">Edit Note for {customer.given_name} {customer.family_name}</h3>
+                        <textarea
+                            value={noteText}
+                            onChange={(e) => setNoteText(e.target.value)}
+                            className="w-full h-40 mt-4 p-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                            placeholder="Enter notes here..."
+                        />
+                        <div className="flex justify-end space-x-2 mt-4">
+                            <button onClick={onCancel} className="px-4 py-2 bg-gray-200 dark:bg-gray-600 rounded-md">Cancel</button>
+                            <button onClick={handleSave} className="px-4 py-2 bg-cyan-600 text-white rounded-md">Save Note</button>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
 
         const container = document.getElementById('root');
         const root = ReactDOM.createRoot(container);
