@@ -1536,7 +1536,7 @@
                             </table>
                         </div>
                     </div>
-                    {activeFieldFilterPopup && <FilterPopup field={activeFieldFilterPopup} allCustomers={allCustomers} allOrders={allOrders} filters={fieldFilters} setFilters={setFieldFilters} onClose={() => setActiveFieldFilterPopup(null)} getNestedValue={getNestedValue} groupsMap={groupsMap} segmentsMap={segmentsMap} reportType={reportType} />}
+                    {activeFieldFilterPopup && <FilterPopup field={activeFieldFilterPopup} dataSource={dataToDisplay} filters={fieldFilters} setFilters={setFieldFilters} onClose={() => setActiveFieldFilterPopup(null)} getNestedValue={getNestedValue} groupsMap={groupsMap} segmentsMap={segmentsMap} reportType={reportType} />}
                     {isSaveModalOpen && <SaveReportModal onSave={handleModalSave} onCancel={() => setIsSaveModalOpen(false)} />}
                 </div>
             );
@@ -1569,29 +1569,24 @@
             );
         };
 
-        function FilterPopup({ field, allCustomers, allOrders, filters, setFilters, onClose, getNestedValue, groupsMap, segmentsMap, reportType }) {
-            const dataForFilter = reportType === 'customer' ? allCustomers : allOrders;
+        function FilterPopup({ field, dataSource, filters, setFilters, onClose, getNestedValue, groupsMap, segmentsMap, reportType }) {
             const isDateField = field.key === 'created_at' || field.key === 'purchase_date' || field.key === 'last_sms_contact';
 
             const getFieldValues = () => {
                 const values = new Set();
-                dataForFilter.forEach(row => {
+                dataSource.forEach(row => {
                     let value;
-                    if (reportType === 'customer' && field.key === 'groups') {
+                    if (field.key === 'groups') {
                         (row.group_ids || []).forEach(id => { if(groupsMap.has(id)) values.add(groupsMap.get(id))});
                         (row.segment_ids || []).forEach(id => { if(segmentsMap.has(id)) values.add(segmentsMap.get(id))});
-                    } else if (reportType === 'item' && ['given_name', 'family_name', 'email_address', 'phone_number'].includes(field.key)) {
-                        // Special handling for item report customer fields
-                        if (row.customer && Object.keys(row.customer).length > 0) {
-                            value = getNestedValue(row, field.path);
-                            if (value) values.add(value.toString());
-                        }
                     } else {
                         value = getNestedValue(row, field.path);
                         if (isDateField) {
                             value = formatSimpleDate(value);
                         }
-                        if (value) values.add(value.toString());
+                        if (value !== undefined && value !== null && value !== '') {
+                            values.add(value.toString());
+                        }
                     }
                 });
                 return Array.from(values).sort((a,b) => String(a).localeCompare(String(b), undefined, {numeric: true}));
@@ -2268,4 +2263,5 @@
     </script>
 </body>
 </html>
+
 
