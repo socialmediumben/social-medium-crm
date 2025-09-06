@@ -153,8 +153,7 @@
             // View management
             const [currentView, setCurrentView] = useState('dashboard');
             const [reportToLoad, setReportToLoad] = useState(null);
-            const [selectedCustomer, setSelectedCustomer] = useState(null);
-            const [customerDetails, setCustomerDetails] = useState(null);
+            const [profileModalState, setProfileModalState] = useState({ isOpen: false, customer: null });
             const [noteEditorState, setNoteEditorState] = useState({ isOpen: false, customer: null });
             const [pendingNoteEditOnLog, setPendingNoteEditOnLog] = useState(false);
 
@@ -172,11 +171,11 @@
             }, [theme]);
 
             useEffect(() => {
-                if (pendingNoteEditOnLog && customerDetails) {
-                    setNoteEditorState({ isOpen: true, customer: customerDetails });
+                if (pendingNoteEditOnLog && profileModalState.customer) {
+                    setNoteEditorState({ isOpen: true, customer: profileModalState.customer });
                     setPendingNoteEditOnLog(false);
                 }
-            }, [customerDetails, pendingNoteEditOnLog]);
+            }, [profileModalState.customer, pendingNoteEditOnLog]);
 
             const toggleTheme = () => {
                 setTheme(prevTheme => prevTheme === 'light' ? 'dark' : 'light');
@@ -540,7 +539,10 @@
                         })
                     );
 
-                    setCustomerDetails(prevDetails => ({ ...prevDetails, custom_attributes: { ...prevDetails.custom_attributes, [attributeKey]: custom_attribute }, version: custom_attribute.version }));
+                    setProfileModalState(prevState => ({
+                        ...prevState,
+                        customer: { ...prevState.customer, custom_attributes: { ...prevState.customer.custom_attributes, [attributeKey]: custom_attribute }, version: custom_attribute.version }
+                    }));
 
                 } catch (err) {
                     console.error("Failed to update custom attribute:", err);
@@ -555,9 +557,7 @@
                         body: JSON.stringify({ note }),
                     });
                     setAllCustomers(prevCustomers => prevCustomers.map(c => (c.id === customerId ? customer : c)));
-                    if (customerDetails && customerDetails.id === customerId) {
-                        setCustomerDetails(prevDetails => ({ ...prevDetails, ...customer }));
-                    }
+                    setProfileModalState(prevState => ({ ...prevState, customer }));
                     setNoteEditorState({ isOpen: false, customer: null });
                 } catch (err) {
                     console.error("Failed to update note:", err);
@@ -585,7 +585,7 @@
                     const payPayload = { idempotency_key: crypto.randomUUID(), payment_ids: [] };
                     await apiFetch(`/v2/orders/${orderData.order.id}/pay`, { method: 'POST', body: JSON.stringify(payPayload) });
                     await delay(1000);
-                    handleSelectCustomer(selectedCustomer);
+                    handleSelectCustomer(profileModalState.customer, true);
                     setPendingNoteEditOnLog(true);
 
                 } catch (err) {
@@ -594,12 +594,11 @@
                 }
             };
 
-            const handleSelectCustomer = (customer) => {
-                setIsLoading(true);
-                setSelectedCustomer(customer);
-                setCustomerDetails(null);
-                setCurrentView('profile');
-                setLoadingMessage('Fetching customer details...');
+            const handleSelectCustomer = (customer, isRefresh = false) => {
+                if (!isRefresh) {
+                    setIsLoading(true);
+                    setProfileModalState({ isOpen: true, customer: customer });
+                }
                 setError('');
                 
                 const fetchDetails = async () => {
@@ -649,12 +648,11 @@
                                 return acc;
                             }, {})
                         };
-                        setCustomerDetails(fullCustomerProfile);
+                        setProfileModalState({ isOpen: true, customer: fullCustomerProfile });
                     } catch (err) {
                         setError(err.message);
                     } finally {
                         setIsLoading(false);
-                        setLoadingMessage('');
                     }
                 };
                 
@@ -769,12 +767,10 @@
             const widgets = combinedReports.filter(r => r.isWidget);
 
             const renderMainContent = () => {
-                if (isLoading) return <div className="flex justify-center items-center h-full"><div className="spinner"></div><p className="ml-2">{loadingMessage}</p></div>;
+                if (isLoading && !profileModalState.isOpen) return <div className="flex justify-center items-center h-full"><div className="spinner"></div><p className="ml-2">{loadingMessage}</p></div>;
                 if (error) return <div className="p-4 m-4 bg-red-100 text-red-700 rounded-md text-center">{error}</div>;
 
                 switch(currentView) {
-                    case 'profile':
-                        return customerDetails ? <CustomerProfile customer={customerDetails} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} onBack={() => setCurrentView('directory')} onLogContact={handleLogContact} onEditNoteRequest={() => setNoteEditorState({ isOpen: true, customer: customerDetails })} /> : <div className="flex justify-center items-center h-full"><div className="spinner"></div></div>;
                     case 'reports':
                         return <ReportsPage allCustomers={allCustomers} allOrders={allOrders} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} onSelectCustomer={handleSelectCustomer} onBack={() => setCurrentView('dashboard')} savedReports={combinedReports} onSaveReport={handleSaveReport} onUpdateReport={handleUpdateReport} onDeleteReport={handleDeleteReport} initialReport={reportToLoad} onInitialReportLoaded={() => setReportToLoad(null)} totalCustomers={allCustomers.length} />;
                     case 'directory':
@@ -795,6 +791,18 @@
                     <main className="flex-1 overflow-y-auto bg-gray-100 dark:bg-gray-800">
                         {renderMainContent()}
                     </main>
+                    {profileModalState.isOpen && (
+                        <CustomerProfileModal
+                            customer={profileModalState.customer}
+                            isLoading={isLoading}
+                            onClose={() => setProfileModalState({ isOpen: false, customer: null })}
+                            groupsMap={groupsMap}
+                            segmentsMap={segmentsMap}
+                            customAttrDefs={customAttrDefs}
+                            onLogContact={handleLogContact}
+                            onEditNoteRequest={(customer) => setNoteEditorState({ isOpen: true, customer: customer })}
+                        />
+                    )}
                      {noteEditorState.isOpen && (
                         <NoteEditorModal
                             customer={noteEditorState.customer}
@@ -895,12 +903,6 @@
                     <h2 className="text-4xl font-bold text-gray-800 dark:text-gray-200">Dashboard</h2>
                     <p className="text-gray-500 dark:text-gray-400">Welcome to your Social Medium CRM.</p>
                     
-                    {googleCalendarId && (
-                        <div className="mt-8">
-                           <CalendarWidget calendarId={googleCalendarId} />
-                        </div>
-                    )}
-
                     <div className="mt-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                         <button onClick={() => onNavigate('directory')} className="p-6 bg-white dark:bg-gray-800 rounded-lg shadow hover:bg-cyan-50 dark:hover:bg-gray-700 text-left transition">
                             <h3 className="text-xl font-semibold text-gray-800 dark:text-gray-200">Directory</h3>
@@ -922,6 +924,11 @@
                             />
                         ))}
                     </div>
+                    {googleCalendarId && (
+                        <div className="mt-8">
+                           <CalendarWidget calendarId={googleCalendarId} />
+                        </div>
+                    )}
                 </div>
             );
         }
@@ -1386,7 +1393,7 @@
 
             return (
                 <div className="flex h-full">
-                    <ReportsSidebar fields={fields} setFields={setFields} savedReports={savedReports} onLoadReport={handleLoadReport} onSaveReportClick={() => setIsSaveModalOpen(false)} onUpdateReport={onUpdateReport} onDeleteReport={onDeleteReport} />
+                    <ReportsSidebar fields={fields} setFields={setFields} savedReports={savedReports} onLoadReport={handleLoadReport} onSaveReportClick={() => setIsSaveModalOpen(true)} onUpdateReport={onUpdateReport} onDeleteReport={onDeleteReport} />
                     <div className="flex-1 p-8 overflow-y-auto">
                         <div className="flex justify-between items-center mb-6">
                             <button onClick={onBack} className="text-cyan-600 dark:text-cyan-400 hover:text-cyan-800 dark:hover:text-cyan-200"> &larr; Back to Dashboard</button>
@@ -2059,6 +2066,38 @@
             );
         }
 
+        function CustomerProfileModal({ customer, isLoading, onClose, groupsMap, segmentsMap, onLogContact, customAttrDefs, onEditNoteRequest }) {
+            useEffect(() => {
+                document.body.style.overflow = 'hidden';
+                return () => {
+                    document.body.style.overflow = 'unset';
+                };
+            }, []);
+
+            return (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-start justify-center z-40 overflow-y-auto p-4 pt-16">
+                    <div className="bg-gray-100 dark:bg-gray-900 rounded-lg shadow-xl w-full max-w-4xl max-h-full" onClick={e => e.stopPropagation()}>
+                        {isLoading ? (
+                            <div className="flex justify-center items-center h-64">
+                                <div className="spinner"></div>
+                                <p className="ml-2 dark:text-gray-300">Refreshing data...</p>
+                            </div>
+                        ) : (
+                            <CustomerProfile 
+                                customer={customer} 
+                                groupsMap={groupsMap} 
+                                segmentsMap={segmentsMap} 
+                                onBack={onClose}
+                                onLogContact={onLogContact}
+                                customAttrDefs={customAttrDefs}
+                                onEditNoteRequest={onEditNoteRequest}
+                            />
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
         function CustomerProfile({ customer, groupsMap, segmentsMap, onBack, onLogContact, customAttrDefs, onEditNoteRequest }) {
             
             const formatAddress = (address) => {
@@ -2119,7 +2158,7 @@
                             </InfoCard>
                             <InfoCard title="Notes" className="md:col-span-3">
                                 <p className="text-gray-800 dark:text-gray-300 whitespace-pre-wrap">{customer.note || 'N/A'}</p>
-                                <button onClick={onEditNoteRequest} className="mt-2 px-3 py-1 bg-gray-200 dark:bg-gray-700 text-sm rounded-md hover:bg-gray-300 dark:hover:bg-gray-600">Edit</button>
+                                <button onClick={() => onEditNoteRequest(customer)} className="mt-2 px-3 py-1 bg-gray-200 dark:bg-gray-700 text-sm rounded-md hover:bg-gray-300 dark:hover:bg-gray-600">Edit</button>
                             </InfoCard>
                             <InfoCard title="Custom Fields" className="md:col-span-3">
                                 <div className="grid grid-cols-2 gap-x-8">
