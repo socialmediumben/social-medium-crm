@@ -782,7 +782,7 @@
 
                 switch(currentView) {
                     case 'reports':
-                        return <ReportsPage allCustomers={allCustomers} allOrders={allOrders} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} onSelectCustomer={handleSelectCustomer} onBack={() => setCurrentView('dashboard')} savedReports={combinedReports} onSaveReport={handleSaveReport} onUpdateReport={handleUpdateReport} onDeleteReport={handleDeleteReport} initialReport={reportToLoad} onInitialReportLoaded={() => setReportToLoad(null)} totalCustomers={allCustomers.length} />;
+                        return <ReportsPage allCustomers={allCustomers} allOrders={allOrders} groupsMap={groupsMap} segmentsMap={segmentsMap} customAttrDefs={customAttrDefs} onSelectCustomer={handleSelectCustomer} onBack={() => setCurrentView('dashboard')} savedReports={combinedReports} onSaveReport={handleSaveReport} onUpdateReport={handleUpdateReport} onDeleteReport={handleDeleteReport} initialReport={reportToLoad} onInitialReportLoaded={() => setReportToLoad(null)} totalCustomers={allCustomers.length} isAdmin={isAdmin} />;
                     case 'directory':
                         return <DirectoryPage allCustomers={allCustomers} onSelectCustomer={handleSelectCustomer} onBack={() => setCurrentView('dashboard')} />;
                     case 'checklist':
@@ -1200,7 +1200,7 @@
             );
         }
 
-        function ReportsPage({ allCustomers, allOrders, groupsMap, segmentsMap, customAttrDefs, onSelectCustomer, onBack, savedReports, onSaveReport, onUpdateReport, onDeleteReport, initialReport, onInitialReportLoaded, totalCustomers }) {
+        function ReportsPage({ allCustomers, allOrders, groupsMap, segmentsMap, customAttrDefs, onSelectCustomer, onBack, savedReports, onSaveReport, onUpdateReport, onDeleteReport, initialReport, onInitialReportLoaded, totalCustomers, isAdmin }) {
             const getCustomerReportFields = useCallback(() => {
                 const standardFields = [
                     { key: 'customer_id', label: 'Customer ID', visible: false, path: ['id'] },
@@ -1414,7 +1414,7 @@
 
             return (
                 <div className="flex h-full">
-                    <ReportsSidebar fields={fields} setFields={setFields} savedReports={savedReports} onLoadReport={handleLoadReport} onSaveReportClick={() => setIsSaveModalOpen(true)} onUpdateReport={onUpdateReport} onDeleteReport={onDeleteReport} />
+                    <ReportsSidebar fields={fields} setFields={setFields} savedReports={savedReports} onLoadReport={handleLoadReport} onSaveReportClick={() => setIsSaveModalOpen(true)} onUpdateReport={onUpdateReport} onDeleteReport={onDeleteReport} isAdmin={isAdmin} />
                     <div className="flex-1 p-8 overflow-y-auto">
                         <div className="flex justify-between items-center mb-6">
                             <button onClick={onBack} className="text-cyan-600 dark:text-cyan-400 hover:text-cyan-800 dark:hover:text-cyan-200"> &larr; Back to Dashboard</button>
@@ -1478,7 +1478,7 @@
                         </div>
                     </div>
                     {activeFieldFilterPopup && <FilterPopup field={activeFieldFilterPopup} dataSource={dataToDisplay} filters={fieldFilters} setFilters={setFieldFilters} onClose={() => setActiveFieldFilterPopup(null)} getNestedValue={getNestedValue} groupsMap={groupsMap} segmentsMap={segmentsMap} />}
-                    {isSaveModalOpen && <SaveReportModal onSave={handleModalSave} onCancel={() => setIsSaveModalOpen(false)} />}
+                    {isSaveModalOpen && <SaveReportModal onSave={handleModalSave} onCancel={() => setIsSaveModalOpen(false)} isAdmin={isAdmin} />}
                 </div>
             );
         }
@@ -1755,7 +1755,7 @@
             );
         }
         
-        function ReportsSidebar({ fields, setFields, savedReports, onLoadReport, onSaveReportClick, onUpdateReport, onDeleteReport }) {
+        function ReportsSidebar({ fields, setFields, savedReports, onLoadReport, onSaveReportClick, onUpdateReport, onDeleteReport, isAdmin }) {
             const [openSections, setOpenSections] = useState({ reports: true, fields: true });
             const [reportToEdit, setReportToEdit] = useState(null);
             const [deleteModal, setDeleteModal] = useState(null);
@@ -1825,13 +1825,13 @@
                         </div>
                     </SidebarSection>
                 </div>
-                {reportToEdit && <SaveReportModal reportToEdit={reportToEdit} onSave={handleSave} onCancel={() => setReportToEdit(null)} />}
+                {reportToEdit && <SaveReportModal reportToEdit={reportToEdit} onSave={handleSave} onCancel={() => setReportToEdit(null)} isAdmin={isAdmin} />}
                 {deleteModal && <DeleteModal report={deleteModal} onDelete={handleDelete} onCancel={() => setDeleteModal(null)} />}
                 </>
             );
         }
 
-        function SaveReportModal({ onSave, onCancel, reportToEdit }) {
+        function SaveReportModal({ onSave, onCancel, reportToEdit, isAdmin }) {
             const [name, setName] = useState(reportToEdit?.name || '');
             const [isShared, setIsShared] = useState(reportToEdit?.isShared || false);
             const [isWidget, setIsWidget] = useState(reportToEdit?.isWidget || false);
@@ -1893,10 +1893,12 @@
                             <input type="checkbox" checked={isWidget} onChange={e => setIsWidget(e.target.checked)} className="mr-2"/>
                             Add as a Dashboard Widget
                         </label>
-                        <label className="flex items-center mt-2 text-sm dark:text-gray-300">
-                            <input type="checkbox" checked={isShared} onChange={e => setIsShared(e.target.checked)} className="mr-2"/>
-                            Share with organization
-                        </label>
+                        {isAdmin && (
+                            <label className="flex items-center mt-2 text-sm dark:text-gray-300">
+                                <input type="checkbox" checked={isShared} onChange={e => setIsShared(e.target.checked)} className="mr-2"/>
+                                Share with organization
+                            </label>
+                        )}
                         <div className="mt-6 flex justify-end space-x-2">
                             <button onClick={onCancel} className="px-4 py-2 bg-gray-200 dark:bg-gray-600 dark:text-white rounded-md">Cancel</button>
                             <button onClick={() => onSave(name, isWidget, isShared, targetMin, targetMax, targetType, reverseRange)} className="px-4 py-2 bg-cyan-600 text-white rounded-md text-sm">OK</button>
