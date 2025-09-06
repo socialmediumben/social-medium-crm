@@ -149,12 +149,14 @@
             const [allUsers, setAllUsers] = useState([]);
             const [googleCalendarId, setGoogleCalendarId] = useState(null);
             const [displayChecklist, setDisplayChecklist] = useState([]);
+            const [cheatSheetContent, setCheatSheetContent] = useState('');
             
             // View management
             const [currentView, setCurrentView] = useState('dashboard');
             const [reportToLoad, setReportToLoad] = useState(null);
             const [profileModalState, setProfileModalState] = useState({ isOpen: false, customer: null });
             const [noteEditorState, setNoteEditorState] = useState({ isOpen: false, customer: null });
+            const [isCheatSheetOpen, setIsCheatSheetOpen] = useState(false);
             const [pendingNoteEditOnLog, setPendingNoteEditOnLog] = useState(false);
 
 
@@ -216,6 +218,7 @@
                     const userDocRef = db.collection('users').doc(user.uid);
                     const publicReportsDocRef = db.collection('public').doc('reports');
                     const settingsDocRef = db.collection('public').doc('settings');
+                    const cheatSheetDocRef = db.collection('public').doc('cheatSheet');
                     
                     const deserializeReports = (reports = []) => {
                         return reports.map(report => ({
@@ -263,12 +266,19 @@
                         setAllUsers(users);
                     });
 
+                    const unsubscribeCheatSheet = cheatSheetDocRef.onSnapshot(doc => {
+                        if (doc.exists) {
+                            setCheatSheetContent(doc.data().content || '');
+                        }
+                    });
+
 
                     return () => {
                         unsubscribeUser();
                         unsubscribePublic();
                         allUsersUnsubscribe();
                         unsubscribeSettings();
+                        unsubscribeCheatSheet();
                     };
                 }
             }, [user]);
@@ -481,7 +491,7 @@
                                 apiFetch('/v2/customers/groups'),
                                 apiFetch('/v2/customers/segments'),
                                 apiFetch('/v2/locations'),
-                                fetchAllCustomAttributeDefinitions(),
+                                fetchAllCustomAttributeDefinitions()
                             ]);
 
                             if (groupsData.groups) setGroupsMap(new Map(groupsData.groups.map(g => [g.id, g.name])));
@@ -778,7 +788,7 @@
                     case 'checklist':
                         return <ChecklistPage checklist={displayChecklist} onAdd={handleAddChecklistItem} onUpdate={handleUpdateChecklistItem} onDelete={handleDeleteChecklistItem} onBack={() => setCurrentView('dashboard')} isAdmin={isAdmin} />;
                     case 'admin':
-                        return <AdminPage allUsers={allUsers} onBack={() => setCurrentView('dashboard')} />;
+                        return <AdminPage allUsers={allUsers} cheatSheetContent={cheatSheetContent} onBack={() => setCurrentView('dashboard')} />;
                     case 'dashboard':
                     default:
                         return <Dashboard onNavigate={handleNavigate} widgets={widgets} allCustomers={allCustomers} allOrders={allOrders} groupsMap={groupsMap} segmentsMap={segmentsMap} onSelectCustomer={handleSelectCustomer} totalCustomers={allCustomers.length} googleCalendarId={googleCalendarId} />;
@@ -787,7 +797,7 @@
 
             return (
                 <div className="h-screen flex flex-col">
-                    <Toolbar onNavigate={handleNavigate} theme={theme} toggleTheme={toggleTheme} isAdmin={isAdmin} />
+                    <Toolbar onNavigate={handleNavigate} onToggleCheatSheet={() => setIsCheatSheetOpen(true)} theme={theme} toggleTheme={toggleTheme} isAdmin={isAdmin} />
                     <main className="flex-1 overflow-y-auto bg-gray-100 dark:bg-gray-800">
                         {renderMainContent()}
                     </main>
@@ -810,18 +820,29 @@
                             onCancel={() => setNoteEditorState({ isOpen: false, customer: null })}
                         />
                     )}
+                    {isCheatSheetOpen && (
+                        <CheatSheetModal
+                            content={cheatSheetContent}
+                            onClose={() => setIsCheatSheetOpen(false)}
+                        />
+                    )}
                 </div>
             );
         }
 
         // --- Child Components ---
 
-        function Toolbar({ onNavigate, theme, toggleTheme, isAdmin }) {
+        function Toolbar({ onNavigate, onToggleCheatSheet, theme, toggleTheme, isAdmin }) {
             const handleRefresh = () => window.location.reload();
             return (
                 <header className="bg-white dark:bg-gray-900 shadow-md p-4 flex justify-between items-center z-20">
                     <h1 className="text-2xl font-bold text-cyan-700 dark:text-cyan-400">Social Medium CRM</h1>
                     <div className="flex items-center space-x-4">
+                        <button onClick={onToggleCheatSheet} className="p-2 rounded-full text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800" title="Cheat Sheet">
+                            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
+                            </svg>
+                        </button>
                         <button onClick={toggleTheme} className="p-2 rounded-full text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800">
                             {theme === 'light' ? 
                                 <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" /></svg> : 
@@ -1900,9 +1921,10 @@
             );
         }
         
-        function AdminPage({ allUsers, onBack }) {
+        function AdminPage({ allUsers, cheatSheetContent, onBack }) {
             const [searchTerm, setSearchTerm] = useState('');
             const [calendarIdInput, setCalendarIdInput] = useState('');
+            const [cheatSheetInput, setCheatSheetInput] = useState(cheatSheetContent);
             
             useEffect(() => {
                 const settingsDocRef = db.collection('public').doc('settings');
@@ -1912,6 +1934,17 @@
                     }
                 });
             }, []);
+
+            const handleSaveCheatSheet = async () => {
+                const cheatSheetDocRef = db.collection('public').doc('cheatSheet');
+                try {
+                    await cheatSheetDocRef.set({ content: cheatSheetInput });
+                    alert('Cheat Sheet saved successfully!');
+                } catch (error) {
+                    console.error("Error saving Cheat Sheet:", error);
+                    alert('Failed to save Cheat Sheet.');
+                }
+            };
             
             const filteredUsers = useMemo(() => {
                 const lowercasedTerm = searchTerm.toLowerCase();
@@ -1957,6 +1990,18 @@
                                 />
                                 <button onClick={handleSaveCalendarId} className="px-4 py-2 bg-cyan-600 text-white rounded-md hover:bg-cyan-700">Save</button>
                             </div>
+                        </div>
+                        <div className="mt-4">
+                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Cheat Sheet Content</label>
+                            <div className="flex items-center space-x-2 mt-1">
+                                <textarea
+                                    value={cheatSheetInput}
+                                    onChange={e => setCheatSheetInput(e.target.value)}
+                                    placeholder="Enter cheat sheet content here..."
+                                    className="flex-grow w-full h-40 px-3 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                                />
+                            </div>
+                            <button onClick={handleSaveCheatSheet} className="mt-2 px-4 py-2 bg-cyan-600 text-white rounded-md hover:bg-cyan-700">Save Cheat Sheet</button>
                         </div>
                     </div>
 
@@ -2061,6 +2106,31 @@
                                 ))}
                             </ul>
                         )}
+                    </div>
+                </div>
+            );
+        }
+
+        function CheatSheetModal({ content, onClose }) {
+             useEffect(() => {
+                document.body.style.overflow = 'hidden';
+                return () => {
+                    document.body.style.overflow = 'unset';
+                };
+            }, []);
+
+            return (
+                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-start justify-center z-40 overflow-y-auto p-4 pt-16">
+                    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-4xl max-h-full" onClick={e => e.stopPropagation()}>
+                         <div className="p-8">
+                            <div className="flex justify-between items-center">
+                                <h2 className="text-3xl font-bold text-gray-800 dark:text-gray-200">Cheat Sheet</h2>
+                                <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:hover:text-white text-3xl">&times;</button>
+                            </div>
+                            <div className="mt-6 p-4 bg-gray-50 dark:bg-gray-700 rounded-md max-h-96 overflow-y-auto">
+                                <p className="text-gray-800 dark:text-gray-300 whitespace-pre-wrap">{content || 'No content has been set for the cheat sheet yet.'}</p>
+                            </div>
+                        </div>
                     </div>
                 </div>
             );
