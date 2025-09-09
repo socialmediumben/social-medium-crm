@@ -1012,7 +1012,7 @@
                         }
 
                         value = getNestedValue(row, field.path);
-                        if (field.path && (field.path.includes('created_at') || field.path.includes('purchase_date'))) {
+                        if (field.path && (field.path.includes('created_at') || field.path.includes('purchase_date') || field.key === 'last_sms_contact')) {
                             const rowDate = value ? new Date(value) : null;
                             
                             let includedRange = filterConfig.date_range;
@@ -1023,17 +1023,17 @@
                             const startDate = includedRange?.startDate ? new Date(includedRange.startDate) : null;
                             const endDate = includedRange?.endDate ? new Date(includedRange.endDate) : null;
                             
-                            const matchesDateRange = (!startDate || rowDate >= startDate) && (!endDate || rowDate <= endDate);
+                            const matchesDateRange = (!startDate || (rowDate && rowDate >= startDate)) && (!endDate || (rowDate && rowDate <= endDate));
                             
                             let isExcluded = false;
-                            if (filterConfig.excluded_date_range) {
+                            if (filterConfig.excluded_date_range || filterConfig.excluded_relative_date_range) {
                                 let excludedRange = filterConfig.excluded_date_range;
                                 if (filterConfig.excluded_relative_date_range) {
                                     excludedRange = getRelativeDateRange(filterConfig.excluded_relative_date_range);
                                 }
-                                const excludedStartDate = excludedRange.startDate ? new Date(excludedRange.startDate) : null;
-                                const excludedEndDate = excludedRange.endDate ? new Date(excludedRange.endDate) : null;
-                                isExcluded = (!excludedStartDate || rowDate >= excludedStartDate) && (!excludedEndDate || rowDate <= excludedEndDate);
+                                const excludedStartDate = excludedRange?.startDate ? new Date(excludedRange.startDate) : null;
+                                const excludedEndDate = excludedRange?.endDate ? new Date(excludedRange.endDate) : null;
+                                isExcluded = rowDate && (!excludedStartDate || rowDate >= excludedStartDate) && (!excludedEndDate || rowDate <= excludedEndDate);
                             }
                             
                             return matchesDateRange && !isExcluded;
@@ -1053,14 +1053,6 @@
                 });
             }, [widget, allCustomers, allOrders, groupsMap, segmentsMap]);
 
-            const countToDisplay = useMemo(() => {
-                if (widget.reportType === 'customer') {
-                    return filteredData.length;
-                } else { // 'item' report type
-                    return filteredData.length;
-                }
-            }, [filteredData, widget.reportType]);
-
             const customerCount = useMemo(() => {
                 if (widget.reportType === 'customer') {
                     return filteredData.length;
@@ -1070,20 +1062,20 @@
                 }
             }, [filteredData, widget.reportType]);
             
-            const totalCount = widget.reportType === 'customer' ? allCustomers.length : allOrders.length;
+            const totalCount = allCustomers.length;
             const percentage = totalCount > 0 ? (customerCount / totalCount * 100).toFixed(1) : 0;
             
             let borderColor = 'border-transparent';
             let textColor = 'text-cyan-600 dark:text-cyan-400';
 
-            if (widget.targetMin && widget.targetMax) {
-                const count = countToDisplay;
+            if (widget.targetMin != null && widget.targetMax != null) {
+                const count = customerCount;
                 let min = widget.targetMin;
                 let max = widget.targetMax;
 
                 if (widget.targetType === 'percentage') {
-                    min = (widget.targetMin / 100) * (widget.reportType === 'customer' ? allCustomers.length : allOrders.length);
-                    max = (widget.targetMax / 100) * (widget.reportType === 'customer' ? allCustomers.length : allOrders.length);
+                    min = (widget.targetMin / 100) * totalCount;
+                    max = (widget.targetMax / 100) * totalCount;
                 }
 
                 const below = count < min;
@@ -1115,27 +1107,18 @@
             }
 
             const getTargetDifference = () => {
-                if (widget.targetMin && widget.targetMax) {
-                    const count = countToDisplay;
+                if (widget.targetMin != null && widget.targetMax != null) {
+                    const count = customerCount;
                     
                     if (widget.targetType === 'percentage') {
-                        const total = widget.reportType === 'customer' ? allCustomers.length : allOrders.length;
-                        const currentPercentage = (count / total) * 100;
-                        if (currentPercentage < widget.targetMin) {
-                            return `${(currentPercentage - widget.targetMin).toFixed(1)}%`;
-                        }
-                        if (currentPercentage > widget.targetMax) {
-                            return `+${(currentPercentage - widget.targetMax).toFixed(1)}%`;
-                        }
-                        return 0; // In range
+                        const currentPercentage = totalCount > 0 ? (count / totalCount) * 100 : 0;
+                        if (currentPercentage < widget.targetMin) return `${(currentPercentage - widget.targetMin).toFixed(1)}%`;
+                        if (currentPercentage > widget.targetMax) return `+${(currentPercentage - widget.targetMax).toFixed(1)}%`;
+                        return 0;
                     } else {
-                        if (count < widget.targetMin) {
-                            return count - widget.targetMin;
-                        }
-                        if (count > widget.targetMax) {
-                            return `+${count - widget.targetMax}`;
-                        }
-                        return 0; // In range
+                        if (count < widget.targetMin) return count - widget.targetMin;
+                        if (count > widget.targetMax) return `+${count - widget.targetMax}`;
+                        return 0;
                     }
                 }
                 return null;
@@ -1148,8 +1131,8 @@
                     <h3 className="text-xl font-semibold text-gray-800 dark:text-gray-200">{widget.name}</h3>
                     <div className="flex justify-between items-end mt-4">
                         <div>
-                            <p className={`text-5xl font-bold ${textColor}`}>{countToDisplay}</p>
-                            <p className="text-gray-500 dark:text-gray-400">{widget.reportType === 'customer' ? `Customers (${percentage}%)` : `Items`}</p>
+                            <p className={`text-5xl font-bold ${textColor}`}>{customerCount}</p>
+                            <p className="text-gray-500 dark:text-gray-400">Customers ({percentage}%)</p>
                         </div>
                         {targetDifference !== null && (
                             <div className={`flex items-center text-lg font-semibold ${textColor}`}>
@@ -2336,4 +2319,6 @@
     </script>
 </body>
 </html>
+
+
 
