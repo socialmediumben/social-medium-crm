@@ -46,8 +46,8 @@
         const { useState, useEffect, useMemo, useCallback, useRef } = React;
 
         // --- Version Information ---
-        const CRM_VERSION = "3.1";
-        const CRM_VERSION_DESCRIPTION = "Added version tracking to the admin panel.";
+        const CRM_VERSION = "3.2";
+        const CRM_VERSION_DESCRIPTION = "Cleaned up custom attribute display.";
 
         // --- IMPORTANT: CUSTOM ATTRIBUTE KEYS ---
         const PRONOUNS_ATTR_KEY = "square:1af52fc0-c773-45be-8457-204a676fb763";
@@ -2343,6 +2343,13 @@ END:VCARD`;
                 const parts = [ address.address_line_1, address.address_line_2, `${address.locality || ''} ${address.administrative_district_level_1 || ''} ${address.postal_code || ''}`.trim(), address.country ];
                 return parts.filter(Boolean).join(', ');
             };
+
+            const formatCustomAttributeLabel = (label) => {
+                if (/^[A-Z]:\s/.test(label)) {
+                    return label.substring(3);
+                }
+                return label;
+            };
             
             const lastSmsContact = customer.last_sms_contact;
 
@@ -2361,11 +2368,13 @@ END:VCARD`;
                     const def = customAttrDefs.get(attr.key);
                     if (!def || attr.key === PRONOUNS_ATTR_KEY || attr.key === INSTAGRAM_ATTR_KEY) return;
                     
+                    const formattedName = formatCustomAttributeLabel(def.name);
+
                     if (def.schema.$ref.includes('Boolean')) {
-                        if (attr.value === true) booleanAttributes.true.push(def.name);
-                        else booleanAttributes.false.push(def.name);
+                        if (attr.value === true) booleanAttributes.true.push(formattedName);
+                        else booleanAttributes.false.push(formattedName);
                     } else {
-                        otherAttributes.push({ label: def.name, value: attr.value });
+                        otherAttributes.push({ label: formattedName, value: attr.value });
                     }
                 });
                 return { pronouns, instagram, booleanAttributes, otherAttributes };
