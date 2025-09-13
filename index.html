@@ -46,8 +46,8 @@
         const { useState, useEffect, useMemo, useCallback, useRef } = React;
 
         // --- Version Information ---
-        const CRM_VERSION = "3.4";
-        const CRM_VERSION_DESCRIPTION = "Added 'N/A' to report filters for empty fields.";
+        const CRM_VERSION = "3.8";
+        const CRM_VERSION_DESCRIPTION = "Renamed dashboard task widget and made title a link to the full checklist.";
 
         // --- IMPORTANT: CUSTOM ATTRIBUTE KEYS ---
         const PRONOUNS_ATTR_KEY = "square:1af52fc0-c773-45be-8457-204a676fb763";
@@ -802,6 +802,11 @@ END:VCARD`;
                     setSquareAccessToken(token);
                 }
             };
+
+            const currentUserChecklist = useMemo(() => {
+                if (!user) return [];
+                return checklist.filter(task => task.userId === user.uid);
+            }, [checklist, user?.uid]);
             
             if (authLoading) {
                 return <div className="flex justify-center items-center h-full"><div className="spinner"></div></div>;
@@ -833,7 +838,7 @@ END:VCARD`;
                         return <AdminPage allUsers={allUsers} cheatSheetContent={cheatSheetContent} onBack={() => setCurrentView('dashboard')} />;
                     case 'dashboard':
                     default:
-                        return <Dashboard onNavigate={handleNavigate} widgets={widgets} allCustomers={allCustomers} allOrders={allOrders} groupsMap={groupsMap} segmentsMap={segmentsMap} onSelectCustomer={handleSelectCustomer} totalCustomers={allCustomers.length} googleCalendarId={googleCalendarId} />;
+                        return <Dashboard onNavigate={handleNavigate} widgets={widgets} allCustomers={allCustomers} allOrders={allOrders} groupsMap={groupsMap} segmentsMap={segmentsMap} onSelectCustomer={handleSelectCustomer} totalCustomers={allCustomers.length} googleCalendarId={googleCalendarId} checklist={currentUserChecklist} onUpdateChecklistItem={handleUpdateChecklistItem} currentUserId={user.uid} />;
                 }
             };
 
@@ -968,7 +973,7 @@ END:VCARD`;
             );
         }
 
-        function Dashboard({ onNavigate, widgets, allCustomers, allOrders, groupsMap, segmentsMap, onSelectCustomer, googleCalendarId }) {
+        function Dashboard({ onNavigate, widgets, allCustomers, allOrders, groupsMap, segmentsMap, onSelectCustomer, googleCalendarId, checklist, onUpdateChecklistItem, currentUserId, isAdmin }) {
             const handleWidgetClick = (widget) => {
                 onNavigate('reports', widget);
             };
@@ -998,11 +1003,141 @@ END:VCARD`;
                             />
                         ))}
                     </div>
+                     {checklist && checklist.length > 0 && (
+                        <div className="mt-8">
+                            <ChecklistWidget
+                                checklist={checklist}
+                                onUpdate={onUpdateChecklistItem}
+                                onSelectCustomer={onSelectCustomer}
+                                userId={currentUserId}
+                                onNavigate={onNavigate}
+                            />
+                        </div>
+                    )}
                     {googleCalendarId && (
                         <div className="mt-8">
                            <CalendarWidget calendarId={googleCalendarId} />
                         </div>
                     )}
+                </div>
+            );
+        }
+
+        function ChecklistWidget({ checklist, onUpdate, onSelectCustomer, userId, onNavigate }) {
+
+            const categorizedTasks = useMemo(() => {
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                const tomorrow = new Date(today);
+                tomorrow.setDate(tomorrow.getDate() + 1);
+
+                const overdue = [];
+                const dueToday = [];
+
+                checklist.forEach(item => {
+                    if (item.completed) return;
+
+                    if (!item.dueDate) {
+                        dueToday.push(item);
+                    } else {
+                        const dueDate = new Date(item.dueDate);
+                        // Adjust for timezone offset
+                        const userTimezoneOffset = dueDate.getTimezoneOffset() * 60000;
+                        const adjustedDueDate = new Date(dueDate.getTime() + userTimezoneOffset);
+
+                        if (adjustedDueDate < today) overdue.push(item);
+                        else if (adjustedDueDate < tomorrow) dueToday.push(item);
+                    }
+                });
+                
+                const sortItems = (items) => items.sort((a, b) => (new Date(a.dueDate) || 0) - (new Date(b.dueDate) || 0));
+
+                return { overdue: sortItems(overdue), dueToday: sortItems(dueToday) };
+            }, [checklist]);
+
+            if (categorizedTasks.overdue.length === 0 && categorizedTasks.dueToday.length === 0) {
+                return null;
+            }
+
+            const renderTaskText = (item) => {
+                const text = item.text || '';
+                if (text.includes('@@')) {
+                    const [customerId, rest] = text.split('@@');
+                    const [customerName, ...taskDescriptionParts] = rest.split(/:(.*)/s);
+                    const taskDescription = taskDescriptionParts.join(':');
+
+                    return (
+                        <>
+                            <button
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    onSelectCustomer({ id: customerId, given_name: customerName.split(' ')[0] });
+                                }}
+                                className="text-cyan-600 dark:text-cyan-400 hover:underline font-medium"
+                            >
+                                {customerName}:
+                            </button>
+                            <span className="ml-1">{taskDescription}</span>
+                        </>
+                    );
+                }
+                return text;
+            };
+             const renderDueDate = (item) => {
+                if (!item.dueDate) return null;
+                const today = new Date();
+                today.setHours(0, 0, 0, 0); // Set to start of day for accurate comparison
+                const dueDate = new Date(item.dueDate);
+                 // Adjust for timezone offset
+                const userTimezoneOffset = dueDate.getTimezoneOffset() * 60000;
+                const adjustedDueDate = new Date(dueDate.getTime() + userTimezoneOffset);
+                const isOverdue = adjustedDueDate < today && !item.completed;
+
+                return (
+                    <span className={`text-sm ml-auto mr-2 ${isOverdue ? 'text-red-500 font-semibold' : 'text-gray-500 dark:text-gray-400'}`}>
+                        Due: {formatSimpleDate(item.dueDate)}
+                    </span>
+                );
+            };
+
+            const renderTaskList = (items) => (
+                <ul className="space-y-2">
+                    {items.map(item => (
+                        <li key={item.id} className="flex items-center space-x-3 group">
+                            <input 
+                                type="checkbox" 
+                                checked={item.completed} 
+                                onChange={(e) => onUpdate(userId, item.id, e.target.checked)}
+                                className="h-5 w-5 text-cyan-600 border-gray-300 rounded focus:ring-cyan-500 dark:bg-gray-600 dark:border-gray-500"
+                            />
+                            <span className={`flex-grow dark:text-gray-200 ${item.completed ? 'line-through text-gray-400 dark:text-gray-500' : ''}`}>
+                                {renderTaskText(item)}
+                            </span>
+                            {renderDueDate(item)}
+                        </li>
+                    ))}
+                </ul>
+            );
+
+            return (
+                 <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
+                    <button onClick={() => onNavigate('checklist')} className="w-full text-left">
+                        <h3 className="text-xl font-semibold text-gray-800 dark:text-gray-200 mb-4 hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors">Urgent Tasks</h3>
+                    </button>
+                    <div className="space-y-4">
+                        {categorizedTasks.overdue.length > 0 && (
+                            <div>
+                                <h4 className="text-md font-semibold text-red-500 dark:text-red-400 mb-2">Overdue</h4>
+                                {renderTaskList(categorizedTasks.overdue)}
+                            </div>
+                        )}
+                         {categorizedTasks.dueToday.length > 0 && (
+                            <div>
+                                <h4 className="text-md font-semibold text-gray-500 dark:text-gray-400 mb-2">Due Today</h4>
+                                {renderTaskList(categorizedTasks.dueToday)}
+                            </div>
+                        )}
+                    </div>
                 </div>
             );
         }
@@ -2610,5 +2745,4 @@ END:VCARD`;
     </script>
 </body>
 </html>
-
 
