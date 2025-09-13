@@ -46,7 +46,6 @@
         const { useState, useEffect, useMemo, useCallback, useRef } = React;
 
         // --- IMPORTANT: CUSTOM ATTRIBUTE KEYS ---
-        // Please replace these placeholder values with the actual keys from your Square Dashboard.
         const PRONOUNS_ATTR_KEY = "square:1af52fc0-c773-45be-8457-204a676fb763";
         const INSTAGRAM_ATTR_KEY = "square:8b9545ab-0e01-480c-a974-c28a7e71c96e";
 
@@ -2289,7 +2288,7 @@ END:VCARD`;
             );
         }
 
-        function CustomerProfileModal({ customer, isLoading, onClose, groupsMap, segmentsMap, onLogContact, customAttrDefs, onEditNoteRequest, onCreateTaskRequest, onUpdateTask, onDeleteTask }) {
+        function CustomerProfileModal({ customer, isLoading, onClose, groupsMap, segmentsMap, onLogContact, customAttrDefs, onEditNoteRequest, onCreateTaskRequest, onUpdateTask, onDeleteTask, onSaveContact }) {
             useEffect(() => {
                 document.body.style.overflow = 'hidden';
                 return () => {
@@ -2312,6 +2311,7 @@ END:VCARD`;
                                 segmentsMap={segmentsMap} 
                                 onBack={onClose}
                                 onLogContact={onLogContact}
+                                onSaveContact={onSaveContact}
                                 customAttrDefs={customAttrDefs}
                                 onEditNoteRequest={onEditNoteRequest}
                                 onCreateTaskRequest={onCreateTaskRequest}
@@ -2324,7 +2324,7 @@ END:VCARD`;
             );
         }
 
-        function CustomerProfile({ customer, groupsMap, segmentsMap, onBack, onLogContact, customAttrDefs, onEditNoteRequest, onCreateTaskRequest, onUpdateTask, onDeleteTask }) {
+        function CustomerProfile({ customer, groupsMap, segmentsMap, onBack, onLogContact, onSaveContact, customAttrDefs, onEditNoteRequest, onCreateTaskRequest, onUpdateTask, onDeleteTask }) {
             
             const formatAddress = (address) => {
                 if (!address) return 'N/A';
@@ -2379,6 +2379,7 @@ END:VCARD`;
                             <InfoCard title="Contact Information">
                                 <InfoItem label="Email" value={customer.email_address} />
                                 <InfoItem label="Phone" value={customer.phone_number} />
+                                <button onClick={() => onSaveContact(customer)} className="mt-2 w-full px-4 py-2 bg-green-600 text-white rounded-md shadow-sm hover:bg-green-700">Save Contact</button>
                             </InfoCard>
                             <InfoCard title="Address">
                                 <p className="text-gray-800 dark:text-gray-300">{formatAddress(customer.address)}</p>
@@ -2574,5 +2575,4 @@ END:VCARD`;
     </script>
 </body>
 </html>
-
 
