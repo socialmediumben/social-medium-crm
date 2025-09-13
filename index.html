@@ -2288,7 +2288,7 @@ END:VCARD`;
             );
         }
 
-        function CustomerProfileModal({ customer, isLoading, onClose, groupsMap, segmentsMap, onLogContact, customAttrDefs, onEditNoteRequest, onCreateTaskRequest, onUpdateTask, onDeleteTask, onSaveContact }) {
+        function CustomerProfileModal({ customer, isLoading, onClose, groupsMap, segmentsMap, onLogContact, onSaveContact, customAttrDefs, onEditNoteRequest, onCreateTaskRequest, onUpdateTask, onDeleteTask }) {
             useEffect(() => {
                 document.body.style.overflow = 'hidden';
                 return () => {
@@ -2334,22 +2334,30 @@ END:VCARD`;
             
             const lastSmsContact = customer.last_sms_contact;
 
-            const booleanAttributes = { true: [], false: [] };
-            const otherAttributes = [];
-            Array.from(customer.custom_attributes ? Object.values(customer.custom_attributes) : []).forEach(attr => {
-                const def = customAttrDefs.get(attr.key);
-                if (!def) return;
-                
-                if (def.schema.$ref.includes('Boolean')) {
-                    if (attr.value === true) {
-                        booleanAttributes.true.push(def.name);
+            const {
+                pronouns,
+                instagram,
+                booleanAttributes,
+                otherAttributes
+            } = useMemo(() => {
+                const booleanAttributes = { true: [], false: [] };
+                const otherAttributes = [];
+                let pronouns = getNestedValue(customer, ['custom_attributes', PRONOUNS_ATTR_KEY, 'value']);
+                let instagram = getNestedValue(customer, ['custom_attributes', INSTAGRAM_ATTR_KEY, 'value']);
+
+                Array.from(customer.custom_attributes ? Object.values(customer.custom_attributes) : []).forEach(attr => {
+                    const def = customAttrDefs.get(attr.key);
+                    if (!def || attr.key === PRONOUNS_ATTR_KEY || attr.key === INSTAGRAM_ATTR_KEY) return;
+                    
+                    if (def.schema.$ref.includes('Boolean')) {
+                        if (attr.value === true) booleanAttributes.true.push(def.name);
+                        else booleanAttributes.false.push(def.name);
                     } else {
-                        booleanAttributes.false.push(def.name);
+                        otherAttributes.push({ label: def.name, value: attr.value });
                     }
-                } else {
-                    otherAttributes.push({ label: def.name, value: attr.value });
-                }
-            });
+                });
+                return { pronouns, instagram, booleanAttributes, otherAttributes };
+            }, [customer.custom_attributes, customAttrDefs]);
             
             const renderDueDate = (item) => {
                 if (!item.dueDate) return null;
@@ -2379,10 +2387,9 @@ END:VCARD`;
                             <InfoCard title="Contact Information">
                                 <InfoItem label="Email" value={customer.email_address} />
                                 <InfoItem label="Phone" value={customer.phone_number} />
+                                <InfoItem label="Pronouns" value={pronouns} />
+                                <InfoItem label="Instagram" value={instagram ? `@${instagram.replace('@', '')}` : null} />
                                 <button onClick={() => onSaveContact(customer)} className="mt-2 w-full px-4 py-2 bg-green-600 text-white rounded-md shadow-sm hover:bg-green-700">Save Contact</button>
-                            </InfoCard>
-                            <InfoCard title="Address">
-                                <p className="text-gray-800 dark:text-gray-300">{formatAddress(customer.address)}</p>
                             </InfoCard>
                             <InfoCard title="Stats">
                                 <InfoItem label="Last Visit" value={customer.last_visit ? formatDetailedDate(customer.last_visit) : 'No visits found'} />
@@ -2396,12 +2403,7 @@ END:VCARD`;
                                 <InfoItem label="Birthday" value={customer.birthday ? formatSimpleDate(customer.birthday) : 'N/A'} />
                                 <InfoItem label="Company" value={customer.company_name} />
                                 <InfoItem label="Reference ID" value={customer.reference_id} />
-                            </InfoCard>
-                            <InfoCard title="Groups & Segments" className="lg:col-span-2">
-                                <div className="flex flex-wrap gap-2">
-                                    {(customer.group_ids || []).map(id => <Pill key={id} text={groupsMap.get(id) || id} />)}
-                                    {(customer.segment_ids || []).map(id => <Pill key={id} text={segmentsMap.get(id) || id} color="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300" />)}
-                                </div>
+                                <InfoItem label="Address" value={formatAddress(customer.address)} />
                             </InfoCard>
                             <InfoCard title="Associated Tasks" className="md:col-span-3">
                                 {customer.associatedTasks && customer.associatedTasks.length > 0 ? (
@@ -2479,6 +2481,12 @@ END:VCARD`;
                                     ) : (
                                         <p className="text-gray-500 dark:text-gray-400">No orders found for this customer.</p>
                                     )}
+                                </div>
+                            </InfoCard>
+                             <InfoCard title="Groups & Segments" className="md:col-span-3">
+                                <div className="flex flex-wrap gap-2">
+                                    {(customer.group_ids || []).map(id => <Pill key={id} text={groupsMap.get(id) || id} />)}
+                                    {(customer.segment_ids || []).map(id => <Pill key={id} text={segmentsMap.get(id) || id} color="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300" />)}
                                 </div>
                             </InfoCard>
                         </div>
