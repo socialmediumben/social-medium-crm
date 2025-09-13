@@ -2031,7 +2031,6 @@
 
         function ChecklistPage({ checklist, onAdd, onUpdate, onDelete, onBack, isAdmin, onSelectCustomer }) {
             const [newItemText, setNewItemText] = useState('');
-            const [sortMode, setSortMode] = useState('createdAt');
             
             const handleAddItem = (e) => {
                 e.preventDefault();
@@ -2039,32 +2038,68 @@
                 setNewItemText('');
             };
 
-            const sortedChecklist = useMemo(() => {
-                const applySort = (items) => {
-                    return [...items].sort((a, b) => {
-                        if (sortMode === 'dueDate') {
-                            const dateA = a.dueDate ? new Date(a.dueDate) : null;
-                            const dateB = b.dueDate ? new Date(b.dueDate) : null;
-                            if (!dateA && !dateB) return 0;
-                            if (!dateA) return 1;
-                            if (!dateB) return -1;
-                            return dateA - dateB;
-                        } else {
-                            const dateA = a.createdAt?.toDate() || 0;
-                            const dateB = b.createdAt?.toDate() || 0;
-                            return dateA - dateB;
-                        }
-                    });
+            const categorizedChecklist = useMemo(() => {
+                const today = new Date();
+                today.setHours(0, 0, 0, 0);
+                const tomorrow = new Date(today);
+                tomorrow.setDate(tomorrow.getDate() + 1);
+
+                const categories = {
+                    overdue: [],
+                    dueToday: [],
+                    notYetDue: [],
                 };
 
-                if (isAdmin) {
-                    return checklist.map(userList => ({
-                        ...userList,
-                        items: applySort(userList.items)
-                    }));
+                const sortItems = (items) => {
+                    return items.sort((a, b) => {
+                        const dateA = a.dueDate ? new Date(a.dueDate) : new Date(0);
+                        const dateB = b.dueDate ? new Date(b.dueDate) : new Date(0);
+                        return dateA - dateB;
+                    });
                 }
-                return applySort(checklist);
-            }, [checklist, sortMode, isAdmin]);
+
+                if (isAdmin) {
+                    const adminCategories = {};
+                    checklist.forEach(userList => {
+                        const userCats = { overdue: [], dueToday: [], notYetDue: [] };
+                        userList.items.forEach(item => {
+                            if (!item.dueDate) {
+                                userCats.dueToday.push(item);
+                            } else {
+                                const dueDate = new Date(item.dueDate);
+                                if (dueDate < today) userCats.overdue.push(item);
+                                else if (dueDate < tomorrow) userCats.dueToday.push(item);
+                                else userCats.notYetDue.push(item);
+                            }
+                        });
+                        adminCategories[userList.userId] = {
+                            ...userList,
+                            items: {
+                                overdue: sortItems(userCats.overdue),
+                                dueToday: sortItems(userCats.dueToday),
+                                notYetDue: sortItems(userCats.notYetDue),
+                            }
+                        };
+                    });
+                    return adminCategories;
+                } else {
+                    checklist.forEach(item => {
+                        if (!item.dueDate) {
+                            categories.dueToday.push(item);
+                        } else {
+                            const dueDate = new Date(item.dueDate);
+                            if (dueDate < today) categories.overdue.push(item);
+                            else if (dueDate < tomorrow) categories.dueToday.push(item);
+                            else categories.notYetDue.push(item);
+                        }
+                    });
+                    return {
+                        overdue: sortItems(categories.overdue),
+                        dueToday: sortItems(categories.dueToday),
+                        notYetDue: sortItems(categories.notYetDue),
+                    };
+                }
+            }, [checklist, isAdmin]);
 
             const renderTaskText = (item) => {
                 const text = item.text || '';
@@ -2094,14 +2129,49 @@
             const renderDueDate = (item) => {
                 if (!item.dueDate) return null;
                 const today = new Date();
-                today.setHours(23, 59, 59, 999);
+                today.setHours(0, 0, 0, 0); // Set to start of day for accurate comparison
                 const dueDate = new Date(item.dueDate);
-                const isOverdue = dueDate < today && !item.completed;
+                 // Adjust for timezone offset
+                const userTimezoneOffset = dueDate.getTimezoneOffset() * 60000;
+                const adjustedDueDate = new Date(dueDate.getTime() + userTimezoneOffset);
+                const isOverdue = adjustedDueDate < today && !item.completed;
 
                 return (
                     <span className={`text-sm ml-auto mr-2 ${isOverdue ? 'text-red-500 font-semibold' : 'text-gray-500 dark:text-gray-400'}`}>
                         Due: {formatSimpleDate(item.dueDate)}
                     </span>
+                );
+            };
+
+            const renderTaskList = (items, userId) => (
+                <ul className="space-y-4">
+                    {items.map(item => (
+                        <li key={item.id} className="flex items-center space-x-3 group">
+                            <input 
+                                type="checkbox" 
+                                checked={item.completed} 
+                                onChange={(e) => onUpdate(userId, item.id, e.target.checked)}
+                                className="h-5 w-5 text-cyan-600 border-gray-300 rounded focus:ring-cyan-500 dark:bg-gray-600 dark:border-gray-500"
+                            />
+                            <span className={`flex-grow dark:text-gray-200 ${item.completed ? 'line-through text-gray-400 dark:text-gray-500' : ''}`}>
+                                {renderTaskText(item)}
+                            </span>
+                            {renderDueDate(item)}
+                            <button onClick={() => onDelete(userId, item.id)} className="text-red-500 hover:text-red-700 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm6 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clipRule="evenodd" /></svg>
+                            </button>
+                        </li>
+                    ))}
+                </ul>
+            );
+            
+             const renderCategory = (title, items, userId) => {
+                if (items.length === 0) return null;
+                return (
+                    <div>
+                        <h4 className="text-md font-semibold text-gray-500 dark:text-gray-400 mb-2">{title}</h4>
+                        {renderTaskList(items, userId)}
+                    </div>
                 );
             };
 
@@ -2112,74 +2182,42 @@
                     <p className="text-gray-500 dark:text-gray-400 mt-2">{isAdmin ? 'View and manage all user checklists.' : 'Personal tasks and reminders.'}</p>
                     
                     <div className="mt-8 bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-                         <div className="flex justify-between items-center mb-6">
-                            <form onSubmit={handleAddItem} className="flex space-x-2 flex-grow">
-                                <input 
-                                    type="text"
-                                    value={newItemText}
-                                    onChange={(e) => setNewItemText(e.target.value)}
-                                    placeholder="Add a new item..."
-                                    className="flex-grow px-4 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                                />
-                                <button type="submit" className="px-4 py-2 bg-cyan-600 text-white rounded-md hover:bg-cyan-700">Add</button>
-                            </form>
-                            <div className="flex space-x-2 ml-4">
-                                <button onClick={() => setSortMode('createdAt')} className={`px-3 py-2 text-sm font-medium rounded-md ${sortMode === 'createdAt' ? 'bg-cyan-600 text-white' : 'bg-gray-200 dark:bg-gray-700'}`}>Sort by Created</button>
-                                <button onClick={() => setSortMode('dueDate')} className={`px-3 py-2 text-sm font-medium rounded-md ${sortMode === 'dueDate' ? 'bg-cyan-600 text-white' : 'bg-gray-200 dark:bg-gray-700'}`}>Sort by Due Date</button>
-                            </div>
-                        </div>
+                         <form onSubmit={handleAddItem} className="flex space-x-2 mb-6">
+                            <input 
+                                type="text"
+                                value={newItemText}
+                                onChange={(e) => setNewItemText(e.target.value)}
+                                placeholder="Add a new item..."
+                                className="flex-grow px-4 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                            />
+                            <button type="submit" className="px-4 py-2 bg-cyan-600 text-white rounded-md hover:bg-cyan-700">Add</button>
+                        </form>
                         
                         {isAdmin ? (
                             <div className="space-y-6">
-                                {sortedChecklist.length === 0 && <p className="text-gray-500 text-center dark:text-gray-400">No checklists found.</p>}
-                                {sortedChecklist.map(userChecklist => (
-                                    <div key={userChecklist.userId}>
+                                {Object.values(categorizedChecklist).length === 0 && <p className="text-gray-500 text-center dark:text-gray-400">No checklists found.</p>}
+                                {Object.values(categorizedChecklist).map(userList => (
+                                    <div key={userList.userId}>
                                         <h3 className="text-lg font-semibold text-gray-700 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700 pb-2 mb-3">
-                                            {userChecklist.userIdentifier}
+                                            {userList.userIdentifier}
                                         </h3>
-                                        <ul className="space-y-4">
-                                            {userChecklist.items.map(item => (
-                                                <li key={item.id} className="flex items-center space-x-3 group">
-                                                    <input 
-                                                        type="checkbox" 
-                                                        checked={item.completed} 
-                                                        onChange={(e) => onUpdate(item.userId, item.id, e.target.checked)}
-                                                        className="h-5 w-5 text-cyan-600 border-gray-300 rounded focus:ring-cyan-500 dark:bg-gray-600 dark:border-gray-500"
-                                                    />
-                                                    <span className={`flex-grow dark:text-gray-200 ${item.completed ? 'line-through text-gray-400 dark:text-gray-500' : ''}`}>
-                                                        {renderTaskText(item)}
-                                                    </span>
-                                                    {renderDueDate(item)}
-                                                    <button onClick={() => onDelete(item.userId, item.id)} className="text-red-500 hover:text-red-700 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                        <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm6 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clipRule="evenodd" /></svg>
-                                                    </button>
-                                                </li>
-                                            ))}
-                                        </ul>
+                                        <div className="space-y-4">
+                                            {renderCategory("Overdue", userList.items.overdue, userList.userId)}
+                                            {renderCategory("Due Today", userList.items.dueToday, userList.userId)}
+                                            {renderCategory("Not Yet Due", userList.items.notYetDue, userList.userId)}
+                                        </div>
                                     </div>
                                 ))}
                             </div>
                         ) : (
-                            <ul className="space-y-4">
-                                {sortedChecklist.length === 0 && <p className="text-gray-500 text-center dark:text-gray-400">No items on your checklist.</p>}
-                                {sortedChecklist.map(item => (
-                                    <li key={item.id} className="flex items-center space-x-3 group">
-                                         <input 
-                                            type="checkbox" 
-                                            checked={item.completed} 
-                                            onChange={(e) => onUpdate(item.userId, item.id, e.target.checked)}
-                                            className="h-5 w-5 text-cyan-600 border-gray-300 rounded focus:ring-cyan-500 dark:bg-gray-600 dark:border-gray-500"
-                                        />
-                                        <span className={`flex-grow dark:text-gray-200 ${item.completed ? 'line-through text-gray-400 dark:text-gray-500' : ''}`}>
-                                            {renderTaskText(item)}
-                                        </span>
-                                        {renderDueDate(item)}
-                                        <button onClick={() => onDelete(item.userId, item.id)} className="text-red-500 hover:text-red-700 opacity-0 group-hover:opacity-100 transition-opacity">
-                                            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm6 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clipRule="evenodd" /></svg>
-                                        </button>
-                                    </li>
-                                ))}
-                            </ul>
+                            <div className="space-y-4">
+                                {renderCategory("Overdue", categorizedChecklist.overdue, user.uid)}
+                                {renderCategory("Due Today", categorizedChecklist.dueToday, user.uid)}
+                                {renderCategory("Not Yet Due", categorizedChecklist.notYetDue, user.uid)}
+                                {categorizedChecklist.overdue.length === 0 && categorizedChecklist.dueToday.length === 0 && categorizedChecklist.notYetDue.length === 0 &&
+                                    <p className="text-gray-500 text-center dark:text-gray-400">No items on your checklist.</p>
+                                }
+                            </div>
                         )}
                     </div>
                 </div>
