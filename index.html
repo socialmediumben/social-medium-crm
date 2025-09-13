@@ -45,6 +45,10 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo, useCallback, useRef } = React;
 
+        // --- Version Information ---
+        const CRM_VERSION = "3.1";
+        const CRM_VERSION_DESCRIPTION = "Added version tracking to the admin panel.";
+
         // --- IMPORTANT: CUSTOM ATTRIBUTE KEYS ---
         const PRONOUNS_ATTR_KEY = "square:1af52fc0-c773-45be-8457-204a676fb763";
         const INSTAGRAM_ATTR_KEY = "square:8b9545ab-0e01-480c-a974-c28a7e71c96e";
@@ -2041,6 +2045,14 @@ END:VCARD`;
                                 />
                             </div>
                             <button onClick={handleSaveCheatSheet} className="mt-2 px-4 py-2 bg-cyan-600 text-white rounded-md hover:bg-cyan-700">Save Cheat Sheet</button>
+                        </div>
+                    </div>
+
+                     <div className="mt-8 bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+                        <h3 className="text-xl font-semibold text-gray-800 dark:text-gray-200">Version Information</h3>
+                        <div className="mt-4 text-sm text-gray-600 dark:text-gray-400">
+                            <p><span className="font-semibold">Version:</span> {CRM_VERSION}</p>
+                            <p><span className="font-semibold">Last Update:</span> {CRM_VERSION_DESCRIPTION}</p>
                         </div>
                     </div>
 
