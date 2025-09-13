@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Social Medium CRM V4</title>
+    <title>Social Medium CRM V3</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <!-- React and Babel -->
@@ -46,8 +46,8 @@
         const { useState, useEffect, useMemo, useCallback, useRef } = React;
 
         // --- Version Information ---
-        const CRM_VERSION = "4.2";
-        const CRM_VERSION_DESCRIPTION = "Fixed sync failure by batching Firestore writes to handle large datasets.";
+        const CRM_VERSION = "3.8";
+        const CRM_VERSION_DESCRIPTION = "Renamed dashboard task widget and made title a link to the full checklist.";
 
         // --- IMPORTANT: CUSTOM ATTRIBUTE KEYS ---
         const PRONOUNS_ATTR_KEY = "square:1af52fc0-c773-45be-8457-204a676fb763";
@@ -162,7 +162,6 @@
             const [googleCalendarId, setGoogleCalendarId] = useState(null);
             const [displayChecklist, setDisplayChecklist] = useState([]);
             const [cheatSheetContent, setCheatSheetContent] = useState('');
-            const [lastSyncTime, setLastSyncTime] = useState(null);
             
             // View management
             const [currentView, setCurrentView] = useState('dashboard');
@@ -233,7 +232,6 @@
                     const publicReportsDocRef = db.collection('public').doc('reports');
                     const settingsDocRef = db.collection('public').doc('settings');
                     const cheatSheetDocRef = db.collection('public').doc('cheatSheet');
-                    const syncDocRef = db.collection('public').doc('sync');
                     
                     const deserializeReports = (reports = []) => {
                         return reports.map(report => ({
@@ -287,12 +285,6 @@
                         }
                     });
 
-                    const unsubscribeSync = syncDocRef.onSnapshot(doc => {
-                        if(doc.exists) {
-                            setLastSyncTime(doc.data().lastSync);
-                        }
-                    });
-
 
                     return () => {
                         unsubscribeUser();
@@ -300,7 +292,6 @@
                         allUsersUnsubscribe();
                         unsubscribeSettings();
                         unsubscribeCheatSheet();
-                        unsubscribeSync();
                     };
                 }
             }, [user]);
@@ -387,157 +378,169 @@
                     await itemRef.delete();
                 }
             };
-            
-            const fetchAllSquareData = async (endpoint, body, dataKey, method = 'POST') => {
-                let allData = [];
+
+            const fetchAllCustomers = useCallback(async () => {
+                setLoadingMessage('Fetching all customers...');
+                let fetchedCustomers = [];
                 let cursor = undefined;
                 do {
-                    let currentEndpoint = endpoint;
-                    const options = { method, headers: {} };
+                    const data = await apiFetch('/v2/customers/search', {
+                        method: 'POST',
+                        body: JSON.stringify({ query: { sort: { field: "CREATED_AT", order: "DESC" } }, cursor: cursor })
+                    });
+                    if (data.customers) fetchedCustomers.push(...data.customers);
+                    cursor = data.cursor;
+                    if (cursor) await delay(200);
+                } while (cursor);
+                
+                const uniqueCustomers = Array.from(new Map(fetchedCustomers.map(customer => [customer.id, customer])).values());
 
-                    if (method === 'POST') {
-                        options.body = JSON.stringify({ ...body, cursor });
-                        options.headers['Content-Type'] = 'application/json';
-                    } else if (cursor) {
-                        const separator = endpoint.includes('?') ? '&' : '?';
-                        currentEndpoint = `${endpoint}${separator}cursor=${cursor}`;
+                uniqueCustomers.sort((a, b) => (a.given_name || '').localeCompare(b.given_name || ''));
+                setAllCustomers(uniqueCustomers);
+            }, [squareAccessToken]);
+
+            const fetchAllOrders = useCallback(async (locationId) => {
+                setLoadingMessage('Fetching all orders...');
+                
+                const customerMapByContact = new Map();
+                for (const customer of allCustomers) {
+                    if (customer.given_name && customer.phone_number) {
+                        const key = `${customer.given_name.toLowerCase().trim()}-${customer.phone_number.replace(/\D/g, '')}`;
+                        customerMapByContact.set(key, customer.id);
                     }
+                }
+
+                let fetchedOrders = [];
+                let cursor = undefined;
+                do {
+                    const data = await apiFetch('/v2/orders/search', {
+                        method: 'POST',
+                        body: JSON.stringify({
+                            location_ids: [locationId],
+                            cursor: cursor
+                        })
+                    });
                     
-                    const data = await apiFetch(currentEndpoint, options);
-                    
-                    if (data[dataKey]) {
-                        allData.push(...data[dataKey]);
+                    if (data && data.orders) {
+                        const ordersWithCustomerId = data.orders.map(order => {
+                            if (!order.customer_id && order.fulfillments?.[0]?.pickup_details?.recipient?.given_name && order.fulfillments?.[0]?.pickup_details?.recipient?.phone_number) {
+                                const recipient = order.fulfillments[0].pickup_details.recipient;
+                                const key = `${recipient.given_name.toLowerCase().trim()}-${recipient.phone_number.replace(/\D/g, '')}`;
+                                const matchedCustomerId = customerMapByContact.get(key);
+                                if (matchedCustomerId) {
+                                    return { ...order, customer_id: matchedCustomerId };
+                                }
+                            }
+                            return order;
+                        });
+
+                        fetchedOrders.push(...ordersWithCustomerId);
                     }
                     cursor = data.cursor;
                     if (cursor) await delay(200);
                 } while (cursor);
-                return allData;
-            };
-            
-            const clearCollection = async (collectionRef) => {
-                 const snapshot = await collectionRef.limit(500).get();
-                 if (snapshot.size === 0) {
-                     return;
-                 }
-                 const batch = db.batch();
-                 snapshot.docs.forEach(doc => {
-                     batch.delete(doc.ref);
-                 });
-                 await batch.commit();
-                 await clearCollection(collectionRef);
-            };
-            
-             const handleSyncWithSquare = useCallback(async () => {
-                if (!locationId) {
-                    setError('Location ID not available yet. Please wait a moment and try again.');
-                    return;
-                }
-                setIsLoading(true);
-                setLoadingMessage('Syncing with Square... This may take a while.');
-                setError('');
 
-                try {
-                    const [customers, orders, groups, segments, customAttrs] = await Promise.all([
-                        fetchAllSquareData('/v2/customers/search', { query: { sort: { field: "CREATED_AT", order: "DESC" } } }, 'customers'),
-                        fetchAllSquareData('/v2/orders/search', { location_ids: [locationId] }, 'orders'),
-                        apiFetch('/v2/customers/groups').then(d => d.groups || []),
-                        apiFetch('/v2/customers/segments').then(d => d.segments || []),
-                        fetchAllSquareData('/v2/customers/custom-attribute-definitions', {}, 'custom_attribute_definitions', 'GET')
-                    ]);
-
-                    const customersCollection = db.collection('public/squareData/customers');
-                    const ordersCollection = db.collection('public/squareData/orders');
-
-                    await clearCollection(customersCollection);
-                    await clearCollection(ordersCollection);
-                    
-                    for (let i = 0; i < customers.length; i += 400) {
-                        const batch = db.batch();
-                        const chunk = customers.slice(i, i + 400);
-                        chunk.forEach(customer => {
-                            batch.set(customersCollection.doc(customer.id), customer);
-                        });
-                        await batch.commit();
+                const lastContactDates = new Map();
+                for (const order of fetchedOrders) {
+                    if (order.line_items && order.customer_id) {
+                        const contactItem = order.line_items.find(item => item.catalog_object_id === contactedMartinItemId);
+                        if (contactItem) {
+                            const existingDate = lastContactDates.get(order.customer_id);
+                            if (!existingDate || new Date(order.closed_at) > new Date(existingDate)) {
+                                lastContactDates.set(order.customer_id, order.closed_at);
+                            }
+                        }
                     }
-                     for (let i = 0; i < orders.length; i += 400) {
-                        const batch = db.batch();
-                        const chunk = orders.slice(i, i + 400);
-                        chunk.forEach(order => {
-                            batch.set(ordersCollection.doc(order.id), order);
-                        });
-                        await batch.commit();
-                    }
-                    
-                    const metadataDoc = db.collection('public').doc('squareMetadata');
-                    await metadataDoc.set({
-                        groups: groups,
-                        segments: segments,
-                        customAttributeDefinitions: customAttrs,
-                    });
-
-                    const syncDoc = db.collection('public').doc('sync');
-                    await syncDoc.set({ lastSync: firebase.firestore.FieldValue.serverTimestamp() });
-
-                    alert('Sync successful!');
-                    fetchInitialDataFromFirestore(); // Refresh data from cache
-                } catch (err) {
-                    setError('Sync failed: ' + err.message);
-                } finally {
-                    setIsLoading(false);
-                    setLoadingMessage('');
                 }
-            }, [squareAccessToken, locationId]);
 
-            const fetchInitialDataFromFirestore = async () => {
-                setIsLoading(true);
-                setLoadingMessage("Loading data from cache...");
-                try {
-                     const [customersSnapshot, ordersSnapshot, metadataDoc] = await Promise.all([
-                        db.collection('public/squareData/customers').get(),
-                        db.collection('public/squareData/orders').get(),
-                        db.collection('public').doc('squareMetadata').get()
-                    ]);
+                const customersWithContactDates = allCustomers.map(customer => ({
+                    ...customer,
+                    last_sms_contact: lastContactDates.get(customer.id) || null
+                }));
 
-                    const customers = customersSnapshot.docs.map(doc => doc.data());
-                    const orders = ordersSnapshot.docs.map(doc => doc.data());
-                    const metadata = metadataDoc.data() || {};
-                    
-                    setAllCustomers(customers);
-                    const flattenedOrders = orders.flatMap(order => 
-                        (order.line_items || []).map(item => ({
-                            item_uid: `${order.id}-${item.uid}`,
-                            order_id: order.id,
-                            customer_id: order.customer_id,
-                            line_item_name: item.name,
-                            quantity: parseFloat(item.quantity),
-                            purchase_date: order.closed_at,
-                            order_total: order.total_money.amount / 100
-                        }))
-                    );
-                    setAllOrders(flattenedOrders);
+                setAllCustomers(customersWithContactDates);
 
-                    setGroupsMap(new Map((metadata.groups || []).map(g => [g.id, g.name])));
-                    setSegmentsMap(new Map((metadata.segments || []).map(s => [s.id, s.name])));
-                    setCustomAttrDefs(new Map((metadata.customAttributeDefinitions || []).map(def => [def.key, def])));
-
-                } catch (err) {
-                    setError("Failed to load cached data: " + err.message);
-                }
-                setIsLoading(false);
-                setLoadingMessage('');
-            };
+                const flattenedItems = fetchedOrders.flatMap(order => 
+                    (order.line_items || []).map(item => ({
+                        item_uid: `${order.id}-${item.uid}`,
+                        order_id: order.id,
+                        customer_id: order.customer_id,
+                        line_item_name: item.name,
+                        quantity: parseFloat(item.quantity),
+                        purchase_date: order.closed_at,
+                        order_total: order.total_money.amount / 100
+                    }))
+                );
+                
+                setAllOrders(flattenedItems);
+            }, [squareAccessToken, allCustomers]);
 
             useEffect(() => {
                 if (squareAccessToken) {
-                    fetchInitialDataFromFirestore();
-                    const fetchLocation = async () => {
-                         const locationData = await apiFetch('/v2/locations');
-                         const activeLocation = locationData.locations?.find(loc => loc.status === 'ACTIVE');
-                         if (activeLocation) setLocationId(activeLocation.id);
+                    const fetchAllCustomAttributeDefinitions = async () => {
+                        let definitions = [];
+                        let cursor = undefined;
+                        do {
+                            const endpoint = cursor ? `/v2/customers/custom-attribute-definitions?cursor=${cursor}` : '/v2/customers/custom-attribute-definitions';
+                            const data = await apiFetch(endpoint);
+                            if (data.custom_attribute_definitions) {
+                                definitions.push(...data.custom_attribute_definitions);
+                            }
+                            cursor = data.cursor;
+                            if (cursor) await delay(200);
+                        } while (cursor);
+                        return definitions;
                     };
-                    fetchLocation();
+
+                    const fetchInitialData = async () => {
+                        setIsLoading(true);
+                        setLoadingMessage('Fetching initial data...');
+                        setError('');
+                        try {
+                            const [groupsData, segmentsData, locationData, customAttrData] = await Promise.all([
+                                apiFetch('/v2/customers/groups'),
+                                apiFetch('/v2/customers/segments'),
+                                apiFetch('/v2/locations'),
+                                fetchAllCustomAttributeDefinitions()
+                            ]);
+
+                            if (groupsData.groups) setGroupsMap(new Map(groupsData.groups.map(g => [g.id, g.name])));
+                            if (segmentsData.segments) setSegmentsMap(new Map(segmentsData.segments.map(s => [s.id, s.name])));
+                            setCustomAttrDefs(new Map(customAttrData.map(def => [def.key, def])));
+                            
+                            const activeLocation = locationData.locations?.find(loc => loc.status === 'ACTIVE');
+                            if (activeLocation) {
+                                setLocationId(activeLocation.id);
+                                await fetchAllCustomers();
+                            } else {
+                                throw new Error("No active location found for this business.");
+                            }
+
+                        } catch (err) {
+                            if (err.message.toLowerCase().includes('authorized')) {
+                                console.error("[AUTH] Invalid token detected. Clearing token and prompting for a new one.");
+                                const userDocRef = db.collection('users').doc(user.uid);
+                                await userDocRef.update({ squareAccessToken: null });
+                                setSquareAccessToken(null);
+                                setError('');
+                            } else {
+                                setError(err.message);
+                            }
+                        } finally {
+                            setIsLoading(false);
+                            setLoadingMessage('');
+                        }
+                    };
+                    
+                    fetchInitialData();
                 }
-            }, [squareAccessToken]);
+            }, [squareAccessToken, user, fetchAllCustomers]);
+            
+            useEffect(() => {
+                if (allCustomers.length > 0 && locationId) {
+                    fetchAllOrders(locationId);
+                }
+            }, [allCustomers, locationId, fetchAllOrders]);
             
             const handleUpdateCustomAttribute = async (customerId, attributeKey, value) => {
                 try {
@@ -547,10 +550,14 @@
                         body: JSON.stringify(payload),
                     });
 
-                    // Update Firestore cache
-                    await db.collection('public/squareData/customers').doc(customerId).set({
-                        custom_attributes: { [attributeKey]: custom_attribute }
-                    }, { merge: true });
+                    setAllCustomers(prevCustomers => 
+                        prevCustomers.map(c => {
+                            if (c.id === customerId) {
+                                return { ...c, custom_attributes: { ...c.custom_attributes, [attributeKey]: custom_attribute }, version: custom_attribute.version };
+                            }
+                            return c;
+                        })
+                    );
 
                     setProfileModalState(prevState => ({
                         ...prevState,
@@ -569,8 +576,7 @@
                         method: 'PUT',
                         body: JSON.stringify({ note }),
                     });
-                     // Update Firestore cache
-                    await db.collection('public/squareData/customers').doc(customerId).update({ note });
+                    setAllCustomers(prevCustomers => prevCustomers.map(c => (c.id === customerId ? customer : c)));
                     setProfileModalState(prevState => ({ ...prevState, customer }));
                     setNoteEditorState({ isOpen: false, customer: null });
                 } catch (err) {
@@ -598,14 +604,6 @@
                     const orderData = await apiFetch('/v2/orders', { method: 'POST', body: JSON.stringify(orderPayload) });
                     const payPayload = { idempotency_key: crypto.randomUUID(), payment_ids: [] };
                     await apiFetch(`/v2/orders/${orderData.order.id}/pay`, { method: 'POST', body: JSON.stringify(payPayload) });
-                    
-                    // Update Firestore cache with new order
-                    await db.collection('public/squareData/orders').doc(orderData.order.id).set(orderData.order);
-                    await db.collection('public/squareData/customers').doc(customerId).update({
-                        last_sms_contact: orderData.order.closed_at
-                    });
-
-
                     await delay(1000);
                     handleSelectCustomer(profileModalState.customer, true);
                     setPendingNoteEditOnLog(true);
@@ -846,7 +844,7 @@ END:VCARD`;
 
             return (
                 <div className="h-screen flex flex-col">
-                    <Toolbar onNavigate={handleNavigate} onToggleCheatSheet={() => setIsCheatSheetOpen(true)} theme={theme} toggleTheme={toggleTheme} isAdmin={isAdmin} onSync={handleSyncWithSquare} lastSyncTime={lastSyncTime} />
+                    <Toolbar onNavigate={handleNavigate} onToggleCheatSheet={() => setIsCheatSheetOpen(true)} theme={theme} toggleTheme={toggleTheme} isAdmin={isAdmin} />
                     <main className="flex-1 overflow-y-auto bg-gray-100 dark:bg-gray-800">
                         {renderMainContent()}
                     </main>
@@ -892,22 +890,12 @@ END:VCARD`;
 
         // --- Child Components ---
 
-        function Toolbar({ onNavigate, onToggleCheatSheet, theme, toggleTheme, isAdmin, onSync, lastSyncTime }) {
-            const formatSyncTime = (timestamp) => {
-                if (!timestamp) return "Never";
-                return new Date(timestamp.seconds * 1000).toLocaleString();
-            }
-
+        function Toolbar({ onNavigate, onToggleCheatSheet, theme, toggleTheme, isAdmin }) {
+            const handleRefresh = () => window.location.reload();
             return (
                 <header className="bg-white dark:bg-gray-900 shadow-md p-4 flex justify-between items-center z-20">
                     <h1 className="text-2xl font-bold text-cyan-700 dark:text-cyan-400">Social Medium CRM</h1>
                     <div className="flex items-center space-x-4">
-                        <div className="flex items-center space-x-2">
-                           <span className="text-xs text-gray-500 dark:text-gray-400">Last Synced: {formatSyncTime(lastSyncTime)}</span>
-                           <button onClick={onSync} className="p-2 rounded-full text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800" title="Sync with Square">
-                                <span className="text-2xl">↺</span>
-                           </button>
-                        </div>
                         <button onClick={onToggleCheatSheet} className="p-2 rounded-full text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800" title="Cheat Sheet">
                             <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" />
@@ -922,6 +910,7 @@ END:VCARD`;
                         <button onClick={() => onNavigate('dashboard')} className="text-sm font-medium text-gray-600 dark:text-gray-300 hover:text-cyan-600 dark:hover:text-cyan-400">Dashboard</button>
                         <button onClick={() => onNavigate('checklist')} className="text-sm font-medium text-gray-600 dark:text-gray-300 hover:text-cyan-600 dark:hover:text-cyan-400">Checklist</button>
                         {isAdmin && <button onClick={() => onNavigate('admin')} className="text-sm font-medium text-gray-600 dark:text-gray-300 hover:text-cyan-600 dark:hover:text-cyan-400">Admin</button>}
+                        <button onClick={handleRefresh} className="text-sm font-medium text-gray-600 dark:text-gray-300 hover:text-cyan-600 dark:hover:text-cyan-400">Refresh</button>
                         <button onClick={() => auth.signOut()} className="px-4 py-2 bg-cyan-600 text-white rounded-md text-sm font-medium hover:bg-cyan-700">Logout</button>
                     </div>
                 </header>
@@ -984,7 +973,7 @@ END:VCARD`;
             );
         }
 
-        function Dashboard({ onNavigate, widgets, allCustomers, allOrders, groupsMap, segmentsMap, onSelectCustomer, googleCalendarId, checklist, onUpdateChecklistItem, currentUserId }) {
+        function Dashboard({ onNavigate, widgets, allCustomers, allOrders, groupsMap, segmentsMap, onSelectCustomer, googleCalendarId, checklist, onUpdateChecklistItem, currentUserId, isAdmin }) {
             const handleWidgetClick = (widget) => {
                 onNavigate('reports', widget);
             };
@@ -2085,7 +2074,7 @@ END:VCARD`;
                         </label>
                         {isAdmin && (
                             <label className="flex items-center mt-2 text-sm dark:text-gray-300">
-                                <input type="checkbox" checked={isShared} onChange={(e) => setIsShared(e.target.checked)} className="mr-2"/>
+                                <input type="checkbox" checked={isShared} onChange={e => setIsShared(e.target.checked)} className="mr-2"/>
                                 Share with organization
                             </label>
                         )}
@@ -2756,4 +2745,3 @@ END:VCARD`;
     </script>
 </body>
 </html>
-
