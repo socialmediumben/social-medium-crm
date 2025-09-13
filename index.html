@@ -45,6 +45,11 @@
     <script type="text/babel">
         const { useState, useEffect, useMemo, useCallback, useRef } = React;
 
+        // --- IMPORTANT: CUSTOM ATTRIBUTE KEYS ---
+        // Please replace these placeholder values with the actual keys from your Square Dashboard.
+        const PRONOUNS_ATTR_KEY = "square:1af52fc0-c773-45be-8457-204a676fb763";
+        const INSTAGRAM_ATTR_KEY = "square:8b9545ab-0e01-480c-a974-c28a7e71c96e";
+
         // --- Utility Functions ---
         const formatSimpleDate = (dateString) => {
             if (!dateString || dateString === 'N/A') return 'N/A';
@@ -604,6 +609,34 @@
                     setError("Could not log contact. Please try again.");
                 }
             };
+            
+            const handleSaveContact = (customer) => {
+                const pronouns = getNestedValue(customer, ['custom_attributes', PRONOUNS_ATTR_KEY, 'value']) || '';
+                const instagram = getNestedValue(customer, ['custom_attributes', INSTAGRAM_ATTR_KEY, 'value']) || '';
+
+                let note = '';
+                if (pronouns) note += `Pronouns: ${pronouns}\\n`;
+                if (instagram) note += `Instagram: @${instagram.replace('@', '')}\\n`;
+
+                const vCard = `BEGIN:VCARD
+VERSION:3.0
+FN:${customer.given_name || ''} ${customer.family_name || ''}
+N:${customer.family_name || ''};${customer.given_name || ''};;;
+TEL;TYPE=CELL:${customer.phone_number || ''}
+EMAIL:${customer.email_address || ''}
+NOTE:${note}
+END:VCARD`;
+
+                const blob = new Blob([vCard], { type: 'text/vcard;charset=utf-8' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `${customer.given_name || 'contact'}_${customer.family_name || ''}.vcf`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            };
 
             const handleSelectCustomer = (customer, isRefresh = false) => {
                 if (!isRefresh) {
@@ -815,6 +848,7 @@
                             segmentsMap={segmentsMap}
                             customAttrDefs={customAttrDefs}
                             onLogContact={handleLogContact}
+                            onSaveContact={handleSaveContact}
                             onEditNoteRequest={(customer) => setNoteEditorState({ isOpen: true, customer: customer })}
                             onCreateTaskRequest={(customer) => setTaskCreatorState({isOpen: true, customer: customer})}
                             onUpdateTask={handleUpdateChecklistItem}
@@ -2540,4 +2574,5 @@
     </script>
 </body>
 </html>
+
 
