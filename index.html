@@ -49,8 +49,11 @@
         const formatSimpleDate = (dateString) => {
             if (!dateString || dateString === 'N/A') return 'N/A';
             const date = new Date(dateString);
-            if (isNaN(date)) return 'N/A';
-            return date.toLocaleDateString();
+             // Adjust for timezone offset to prevent off-by-one day errors
+            const userTimezoneOffset = date.getTimezoneOffset() * 60000;
+            const adjustedDate = new Date(date.getTime() + userTimezoneOffset);
+            if (isNaN(adjustedDate)) return 'N/A';
+            return adjustedDate.toLocaleDateString();
         };
 
         const formatDetailedDate = (dateString) => {
@@ -291,7 +294,7 @@
                 if (isAdmin) {
                     query = db.collectionGroup('checklists');
                 } else {
-                    query = db.collection('users').doc(user.uid).collection('checklists').orderBy('createdAt', 'asc');
+                    query = db.collection('users').doc(user.uid).collection('checklists');
                 }
                 
                 const unsubscribe = query.onSnapshot(snapshot => {
@@ -327,11 +330,7 @@
                     }, {});
 
                     const groupedChecklists = Object.keys(itemsByUser).map(userId => {
-                        const items = itemsByUser[userId].sort((a, b) => {
-                            const dateA = a.createdAt?.toDate() || new Date(0);
-                            const dateB = b.createdAt?.toDate() || new Date(0);
-                            return dateA - dateB;
-                        });
+                        const items = itemsByUser[userId];
                         return {
                             userId: userId,
                             userIdentifier: userMap.get(userId) || 'Unknown User',
@@ -345,13 +344,14 @@
                 }
             }, [checklist, allUsers, isAdmin]);
 
-            const handleAddChecklistItem = async (text) => {
+            const handleAddChecklistItem = async (text, dueDate) => {
                 if (user && text.trim() !== '') {
                     const checklistCollectionRef = db.collection('users').doc(user.uid).collection('checklists');
                     await checklistCollectionRef.add({
                         text,
                         completed: false,
-                        createdAt: firebase.firestore.FieldValue.serverTimestamp()
+                        createdAt: firebase.firestore.FieldValue.serverTimestamp(),
+                        dueDate: dueDate || null,
                     });
                 }
             };
@@ -1066,20 +1066,15 @@
                 if (widget.reportType === 'item') {
                     return filteredData.length;
                 }
-                return filteredData.length;
+                const uniqueCustomerIds = new Set(filteredData.map(item => item.customer_id).filter(id => id));
+                return widget.reportType === 'customer' ? filteredData.length : uniqueCustomerIds.size;
             }, [filteredData, widget.reportType]);
 
-            const customerCountForPercentage = useMemo(() => {
-                if (widget.reportType === 'customer') {
-                    return filteredData.length;
-                } else { // 'item' report type
-                    const uniqueCustomerIds = new Set(filteredData.map(item => item.customer_id).filter(id => id));
-                    return uniqueCustomerIds.size;
-                }
-            }, [filteredData, widget.reportType]);
-            
-            const totalCustomers = allCustomers.length;
-            const percentage = totalCustomers > 0 ? (customerCountForPercentage / totalCustomers * 100).toFixed(1) : 0;
+            const percentage = useMemo(() => {
+                const total = widget.reportType === 'customer' ? allCustomers.length : allOrders.length;
+                if (total === 0) return 0;
+                return (countToDisplay / total * 100).toFixed(1);
+            }, [countToDisplay, widget.reportType, allCustomers, allOrders]);
             
             let borderColor = 'border-transparent';
             let textColor = 'text-cyan-600 dark:text-cyan-400';
@@ -1090,8 +1085,9 @@
                 let max = widget.targetMax;
 
                 if (widget.targetType === 'percentage') {
-                    min = (widget.targetMin / 100) * (widget.reportType === 'item' ? allOrders.length : allCustomers.length);
-                    max = (widget.targetMax / 100) * (widget.reportType === 'item' ? allOrders.length : allCustomers.length);
+                    const total = widget.reportType === 'item' ? allOrders.length : allCustomers.length;
+                    min = (widget.targetMin / 100) * total;
+                    max = (widget.targetMax / 100) * total;
                 }
 
                 const below = count < min;
@@ -1150,7 +1146,7 @@
                         <div>
                             <p className={`text-5xl font-bold ${textColor}`}>{countToDisplay}</p>
                             <p className="text-gray-500 dark:text-gray-400">
-                                {widget.reportType === 'customer' ? `Customers (${percentage}%)` : 'Items'}
+                                {widget.reportType === 'customer' ? `Customers (${percentage}%)` : `Items (${percentage}%)`}
                             </p>
                         </div>
                         {targetDifference !== null && (
@@ -2035,12 +2031,40 @@
 
         function ChecklistPage({ checklist, onAdd, onUpdate, onDelete, onBack, isAdmin, onSelectCustomer }) {
             const [newItemText, setNewItemText] = useState('');
+            const [sortMode, setSortMode] = useState('createdAt');
             
             const handleAddItem = (e) => {
                 e.preventDefault();
                 onAdd(newItemText);
                 setNewItemText('');
             };
+
+            const sortedChecklist = useMemo(() => {
+                const applySort = (items) => {
+                    return [...items].sort((a, b) => {
+                        if (sortMode === 'dueDate') {
+                            const dateA = a.dueDate ? new Date(a.dueDate) : null;
+                            const dateB = b.dueDate ? new Date(b.dueDate) : null;
+                            if (!dateA && !dateB) return 0;
+                            if (!dateA) return 1;
+                            if (!dateB) return -1;
+                            return dateA - dateB;
+                        } else {
+                            const dateA = a.createdAt?.toDate() || 0;
+                            const dateB = b.createdAt?.toDate() || 0;
+                            return dateA - dateB;
+                        }
+                    });
+                };
+
+                if (isAdmin) {
+                    return checklist.map(userList => ({
+                        ...userList,
+                        items: applySort(userList.items)
+                    }));
+                }
+                return applySort(checklist);
+            }, [checklist, sortMode, isAdmin]);
 
             const renderTaskText = (item) => {
                 const text = item.text || '';
@@ -2067,6 +2091,20 @@
                 return text;
             };
 
+            const renderDueDate = (item) => {
+                if (!item.dueDate) return null;
+                const today = new Date();
+                today.setHours(23, 59, 59, 999);
+                const dueDate = new Date(item.dueDate);
+                const isOverdue = dueDate < today && !item.completed;
+
+                return (
+                    <span className={`text-sm ml-auto mr-2 ${isOverdue ? 'text-red-500 font-semibold' : 'text-gray-500 dark:text-gray-400'}`}>
+                        Due: {formatSimpleDate(item.dueDate)}
+                    </span>
+                );
+            };
+
             return (
                 <div className="p-8">
                     <button onClick={onBack} className="mb-6 text-cyan-600 dark:text-cyan-400 hover:text-cyan-800 dark:hover:text-cyan-200"> &larr; Back to Dashboard</button>
@@ -2074,21 +2112,27 @@
                     <p className="text-gray-500 dark:text-gray-400 mt-2">{isAdmin ? 'View and manage all user checklists.' : 'Personal tasks and reminders.'}</p>
                     
                     <div className="mt-8 bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-                        <form onSubmit={handleAddItem} className="flex space-x-2 mb-6">
-                            <input 
-                                type="text"
-                                value={newItemText}
-                                onChange={(e) => setNewItemText(e.target.value)}
-                                placeholder="Add a new item..."
-                                className="flex-grow px-4 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
-                            />
-                            <button type="submit" className="px-4 py-2 bg-cyan-600 text-white rounded-md hover:bg-cyan-700">Add</button>
-                        </form>
+                         <div className="flex justify-between items-center mb-6">
+                            <form onSubmit={handleAddItem} className="flex space-x-2 flex-grow">
+                                <input 
+                                    type="text"
+                                    value={newItemText}
+                                    onChange={(e) => setNewItemText(e.target.value)}
+                                    placeholder="Add a new item..."
+                                    className="flex-grow px-4 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                                />
+                                <button type="submit" className="px-4 py-2 bg-cyan-600 text-white rounded-md hover:bg-cyan-700">Add</button>
+                            </form>
+                            <div className="flex space-x-2 ml-4">
+                                <button onClick={() => setSortMode('createdAt')} className={`px-3 py-2 text-sm font-medium rounded-md ${sortMode === 'createdAt' ? 'bg-cyan-600 text-white' : 'bg-gray-200 dark:bg-gray-700'}`}>Sort by Created</button>
+                                <button onClick={() => setSortMode('dueDate')} className={`px-3 py-2 text-sm font-medium rounded-md ${sortMode === 'dueDate' ? 'bg-cyan-600 text-white' : 'bg-gray-200 dark:bg-gray-700'}`}>Sort by Due Date</button>
+                            </div>
+                        </div>
                         
                         {isAdmin ? (
                             <div className="space-y-6">
-                                {checklist.length === 0 && <p className="text-gray-500 text-center dark:text-gray-400">No checklists found.</p>}
-                                {checklist.map(userChecklist => (
+                                {sortedChecklist.length === 0 && <p className="text-gray-500 text-center dark:text-gray-400">No checklists found.</p>}
+                                {sortedChecklist.map(userChecklist => (
                                     <div key={userChecklist.userId}>
                                         <h3 className="text-lg font-semibold text-gray-700 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700 pb-2 mb-3">
                                             {userChecklist.userIdentifier}
@@ -2105,6 +2149,7 @@
                                                     <span className={`flex-grow dark:text-gray-200 ${item.completed ? 'line-through text-gray-400 dark:text-gray-500' : ''}`}>
                                                         {renderTaskText(item)}
                                                     </span>
+                                                    {renderDueDate(item)}
                                                     <button onClick={() => onDelete(item.userId, item.id)} className="text-red-500 hover:text-red-700 opacity-0 group-hover:opacity-100 transition-opacity">
                                                         <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm6 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clipRule="evenodd" /></svg>
                                                     </button>
@@ -2116,8 +2161,8 @@
                             </div>
                         ) : (
                             <ul className="space-y-4">
-                                {checklist.length === 0 && <p className="text-gray-500 text-center dark:text-gray-400">No items on your checklist.</p>}
-                                {checklist.map(item => (
+                                {sortedChecklist.length === 0 && <p className="text-gray-500 text-center dark:text-gray-400">No items on your checklist.</p>}
+                                {sortedChecklist.map(item => (
                                     <li key={item.id} className="flex items-center space-x-3 group">
                                          <input 
                                             type="checkbox" 
@@ -2128,6 +2173,7 @@
                                         <span className={`flex-grow dark:text-gray-200 ${item.completed ? 'line-through text-gray-400 dark:text-gray-500' : ''}`}>
                                             {renderTaskText(item)}
                                         </span>
+                                        {renderDueDate(item)}
                                         <button onClick={() => onDelete(item.userId, item.id)} className="text-red-500 hover:text-red-700 opacity-0 group-hover:opacity-100 transition-opacity">
                                             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm6 0a1 1 0 012 0v6a1 1 0 11-2 0V8z" clipRule="evenodd" /></svg>
                                         </button>
@@ -2333,11 +2379,12 @@
 
         function TaskCreatorModal({ customer, onSave, onCancel }) {
             const [taskText, setTaskText] = useState('');
+            const [dueDate, setDueDate] = useState('');
             const customerName = `${customer.given_name} ${customer.family_name}`;
 
             const handleSave = () => {
                 const fullTaskText = `${customer.id}@@${customerName}: ${taskText}`;
-                onSave(fullTaskText);
+                onSave(fullTaskText, dueDate);
                 onCancel();
             };
 
@@ -2351,6 +2398,15 @@
                             className="w-full h-32 mt-4 p-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
                             placeholder="e.g., about the singles night event..."
                         />
+                        <div className="mt-4">
+                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Due Date (Optional)</label>
+                            <input
+                                type="date"
+                                value={dueDate}
+                                onChange={(e) => setDueDate(e.target.value)}
+                                className="w-full mt-1 px-3 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                            />
+                        </div>
                         <div className="flex justify-end space-x-2 mt-4">
                             <button onClick={onCancel} className="px-4 py-2 bg-gray-200 dark:bg-gray-600 rounded-md">Cancel</button>
                             <button onClick={handleSave} className="px-4 py-2 bg-cyan-600 text-white rounded-md">Save Task</button>
@@ -2396,5 +2452,4 @@
     </script>
 </body>
 </html>
-" selected.
 
