@@ -46,12 +46,13 @@
         const { useState, useEffect, useMemo, useCallback, useRef } = React;
 
         // --- Version Information ---
-        const CRM_VERSION = "3.2";
-        const CRM_VERSION_DESCRIPTION = "Cleaned up custom attribute display.";
+        const CRM_VERSION = "3.3";
+        const CRM_VERSION_DESCRIPTION = "Moved Legal Name custom attribute to Details card.";
 
         // --- IMPORTANT: CUSTOM ATTRIBUTE KEYS ---
         const PRONOUNS_ATTR_KEY = "square:1af52fc0-c773-45be-8457-204a676fb763";
         const INSTAGRAM_ATTR_KEY = "square:8b9545ab-0e01-480c-a974-c28a7e71c96e";
+        const LEGAL_NAME_ATTR_KEY = "square:ec552f4c-61bc-449e-9ae9-d9f641e18fc2";
 
         // --- Utility Functions ---
         const formatSimpleDate = (dateString) => {
@@ -2356,6 +2357,7 @@ END:VCARD`;
             const {
                 pronouns,
                 instagram,
+                legalName,
                 booleanAttributes,
                 otherAttributes
             } = useMemo(() => {
@@ -2363,10 +2365,11 @@ END:VCARD`;
                 const otherAttributes = [];
                 let pronouns = getNestedValue(customer, ['custom_attributes', PRONOUNS_ATTR_KEY, 'value']);
                 let instagram = getNestedValue(customer, ['custom_attributes', INSTAGRAM_ATTR_KEY, 'value']);
+                let legalName = getNestedValue(customer, ['custom_attributes', LEGAL_NAME_ATTR_KEY, 'value']);
 
                 Array.from(customer.custom_attributes ? Object.values(customer.custom_attributes) : []).forEach(attr => {
                     const def = customAttrDefs.get(attr.key);
-                    if (!def || attr.key === PRONOUNS_ATTR_KEY || attr.key === INSTAGRAM_ATTR_KEY) return;
+                    if (!def || attr.key === PRONOUNS_ATTR_KEY || attr.key === INSTAGRAM_ATTR_KEY || attr.key === LEGAL_NAME_ATTR_KEY) return;
                     
                     const formattedName = formatCustomAttributeLabel(def.name);
 
@@ -2377,7 +2380,7 @@ END:VCARD`;
                         otherAttributes.push({ label: formattedName, value: attr.value });
                     }
                 });
-                return { pronouns, instagram, booleanAttributes, otherAttributes };
+                return { pronouns, instagram, legalName, booleanAttributes, otherAttributes };
             }, [customer.custom_attributes, customAttrDefs]);
             
             const renderDueDate = (item) => {
@@ -2421,6 +2424,7 @@ END:VCARD`;
                                 </div>
                             </InfoCard>
                             <InfoCard title="Details">
+                                <InfoItem label="Legal Name" value={legalName} />
                                 <InfoItem label="Birthday" value={customer.birthday ? formatSimpleDate(customer.birthday) : 'N/A'} />
                                 <InfoItem label="Company" value={customer.company_name} />
                                 <InfoItem label="Reference ID" value={customer.reference_id} />
