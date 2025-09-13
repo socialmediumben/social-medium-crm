@@ -46,8 +46,8 @@
         const { useState, useEffect, useMemo, useCallback, useRef } = React;
 
         // --- Version Information ---
-        const CRM_VERSION = "3.3";
-        const CRM_VERSION_DESCRIPTION = "Moved Legal Name custom attribute to Details card.";
+        const CRM_VERSION = "3.4";
+        const CRM_VERSION_DESCRIPTION = "Added 'N/A' to report filters for empty fields.";
 
         // --- IMPORTANT: CUSTOM ATTRIBUTE KEYS ---
         const PRONOUNS_ATTR_KEY = "square:1af52fc0-c773-45be-8457-204a676fb763";
@@ -1561,11 +1561,13 @@ END:VCARD`;
                         (row.segment_ids || []).forEach(id => { if(segmentsMap.has(id)) values.add(segmentsMap.get(id))});
                     } else {
                         value = getNestedValue(row, field.path);
-                        if (isDateField) {
-                            value = formatSimpleDate(value);
-                        }
                         if (value !== undefined && value !== null && value !== '') {
+                            if (isDateField) {
+                                value = formatSimpleDate(value);
+                            }
                             values.add(value.toString());
+                        } else {
+                            values.add('N/A');
                         }
                     }
                 });
@@ -2608,4 +2610,5 @@ END:VCARD`;
     </script>
 </body>
 </html>
+
 
