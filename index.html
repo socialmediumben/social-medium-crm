@@ -46,8 +46,8 @@
         const { useState, useEffect, useMemo, useCallback, useRef } = React;
 
         // --- Version Information ---
-        const CRM_VERSION = "4.0";
-        const CRM_VERSION_DESCRIPTION = "Implemented mobile-first responsive navigation.";
+        const CRM_VERSION = "4.1";
+        const CRM_VERSION_DESCRIPTION = "Removed light/dark mode for a clean, consistent interface.";
 
         // --- IMPORTANT: CUSTOM ATTRIBUTE KEYS ---
         const PRONOUNS_ATTR_KEY = "square:1af52fc0-c773-45be-8457-204a676fb763";
@@ -145,7 +145,6 @@
             const [isLoading, setIsLoading] = useState(false);
             const [loadingMessage, setLoadingMessage] = useState('');
             const [error, setError] = useState('');
-            const [theme, setTheme] = useState(localStorage.getItem('theme') || 'light');
             const [isAdmin, setIsAdmin] = useState(false);
             
             // Data stores
@@ -177,24 +176,11 @@
             const contactedMartinItemId = "376G3V4PU6H6VE6MEREUY3TD";
 
             useEffect(() => {
-                if (theme === 'dark') {
-                    document.documentElement.classList.add('dark');
-                } else {
-                    document.documentElement.classList.remove('dark');
-                }
-                localStorage.setItem('theme', theme);
-            }, [theme]);
-
-            useEffect(() => {
                 if (pendingNoteEditOnLog && profileModalState.customer) {
                     setNoteEditorState({ isOpen: true, customer: profileModalState.customer });
                     setPendingNoteEditOnLog(false);
                 }
             }, [profileModalState.customer, pendingNoteEditOnLog]);
-
-            const toggleTheme = () => {
-                setTheme(prevTheme => prevTheme === 'light' ? 'dark' : 'light');
-            };
 
             const apiFetch = async (endpoint, options = {}) => {
                 const response = await fetch(`${API_PROXY_URL}/api${endpoint}`, {
@@ -844,8 +830,8 @@ END:VCARD`;
 
             return (
                 <div className="h-screen flex flex-col">
-                    <Toolbar onNavigate={handleNavigate} onToggleCheatSheet={() => setIsCheatSheetOpen(true)} theme={theme} toggleTheme={toggleTheme} isAdmin={isAdmin} />
-                    <main className="flex-1 overflow-y-auto bg-gray-100 dark:bg-gray-800">
+                    <Toolbar onNavigate={handleNavigate} onToggleCheatSheet={() => setIsCheatSheetOpen(true)} isAdmin={isAdmin} />
+                    <main className="flex-1 overflow-y-auto bg-gray-100">
                         {renderMainContent()}
                     </main>
                     {profileModalState.isOpen && (
@@ -890,27 +876,21 @@ END:VCARD`;
 
         // --- Child Components ---
 
-        function Toolbar({ onNavigate, onToggleCheatSheet, theme, toggleTheme, isAdmin }) {
+        function Toolbar({ onNavigate, onToggleCheatSheet, isAdmin }) {
             return (
-                <header className="bg-white dark:bg-gray-900 shadow-md p-4 flex justify-between items-center z-20">
-                    <h1 className="text-2xl font-bold text-cyan-700 dark:text-cyan-400">Social Medium CRM</h1>
+                <header className="bg-white shadow-md p-4 flex justify-between items-center z-20">
+                    <h1 className="text-2xl font-bold text-cyan-700">Social Medium CRM</h1>
                     <div className="flex items-center space-x-2">
-                        <button onClick={onToggleCheatSheet} className="p-2 rounded-full text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800" title="Cheat Sheet">
+                        <button onClick={onToggleCheatSheet} className="p-2 rounded-full text-gray-500 hover:bg-gray-100" title="Cheat Sheet">
                              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z" /></svg>
                         </button>
-                        <button onClick={toggleTheme} className="p-2 rounded-full text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800" title={theme === 'light' ? 'Dark Mode' : 'Light Mode'}>
-                            {theme === 'light' ? 
-                                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" /></svg> : 
-                                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" /></svg>
-                            }
-                        </button>
-                        <button onClick={() => onNavigate('dashboard')} className="p-2 rounded-full text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800" title="Dashboard">
+                        <button onClick={() => onNavigate('dashboard')} className="p-2 rounded-full text-gray-500 hover:bg-gray-100" title="Dashboard">
                              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" /></svg>
                         </button>
-                        <button onClick={() => onNavigate('checklist')} className="p-2 rounded-full text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800" title="Checklist">
+                        <button onClick={() => onNavigate('checklist')} className="p-2 rounded-full text-gray-500 hover:bg-gray-100" title="Checklist">
                              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" /></svg>
                         </button>
-                        {isAdmin && <button onClick={() => onNavigate('admin')} className="p-2 rounded-full text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800" title="Admin">
+                        {isAdmin && <button onClick={() => onNavigate('admin')} className="p-2 rounded-full text-gray-500 hover:bg-gray-100" title="Admin">
                              <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" /><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" /></svg>
                         </button>}
                         <button onClick={() => auth.signOut()} className="px-4 py-2 bg-cyan-600 text-white rounded-md text-sm font-medium hover:bg-cyan-700">Logout</button>
@@ -941,16 +921,16 @@ END:VCARD`;
 
             return (
                 <div className="flex items-center justify-center h-full">
-                    <div className="w-full max-w-md p-8 bg-white dark:bg-gray-800 rounded-lg shadow-md">
-                        <h1 className="text-2xl font-bold text-center text-gray-800 dark:text-gray-200">{isLogin ? 'Login' : 'Sign Up'}</h1>
+                    <div className="w-full max-w-md p-8 bg-white rounded-lg shadow-md">
+                        <h1 className="text-2xl font-bold text-center text-gray-800">{isLogin ? 'Login' : 'Sign Up'}</h1>
                         <form onSubmit={handleSubmit} className="mt-6 space-y-4">
-                            <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="Email" required className="w-full px-4 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white" />
-                            <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Password" required className="w-full px-4 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white" />
+                            <input type="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="Email" required className="w-full px-4 py-2 border rounded-md" />
+                            <input type="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="Password" required className="w-full px-4 py-2 border rounded-md" />
                             <button type="submit" className="w-full px-6 py-2 text-white bg-cyan-600 rounded-md hover:bg-cyan-700">{isLogin ? 'Login' : 'Sign Up'}</button>
                             {error && <p className="text-red-500 text-sm text-center">{error}</p>}
                         </form>
                         
-                        <button onClick={() => setIsLogin(!isLogin)} className="mt-4 text-sm text-cyan-600 dark:text-cyan-400 hover:underline w-full text-center">
+                        <button onClick={() => setIsLogin(!isLogin)} className="mt-4 text-sm text-cyan-600 hover:underline w-full text-center">
                             {isLogin ? 'Need an account? Sign Up' : 'Already have an account? Login'}
                         </button>
                     </div>
@@ -962,14 +942,14 @@ END:VCARD`;
             const [token, setToken] = useState('');
             return (
                 <div className="flex items-center justify-center h-full">
-                    <div className="w-full max-w-md p-8 bg-white dark:bg-gray-800 rounded-lg shadow-md text-center">
-                        <h1 className="text-2xl font-bold text-gray-800 dark:text-gray-200">Connect to Square</h1>
-                        <p className="text-gray-500 dark:text-gray-400 mt-2 mb-6">Welcome, {userEmail}! Please enter your Square Access Token to continue.</p>
+                    <div className="w-full max-w-md p-8 bg-white rounded-lg shadow-md text-center">
+                        <h1 className="text-2xl font-bold text-gray-800">Connect to Square</h1>
+                        <p className="text-gray-500 mt-2 mb-6">Welcome, {userEmail}! Please enter your Square Access Token to continue.</p>
                         <div className="flex items-center space-x-3">
-                            <input type="password" value={token} onChange={(e) => setToken(e.target.value)} className="flex-grow block w-full px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white" placeholder="Square Access Token" />
+                            <input type="password" value={token} onChange={(e) => setToken(e.target.value)} className="flex-grow block w-full px-4 py-2 text-gray-700 bg-white border border-gray-300 rounded-md" placeholder="Square Access Token" />
                             <button onClick={() => onSaveToken(token)} className="px-6 py-2 text-white bg-cyan-600 rounded-md hover:bg-cyan-700">Save</button>
                         </div>
-                        <button onClick={() => auth.signOut()} className="mt-8 text-sm text-gray-500 dark:text-gray-400 hover:underline">Logout</button>
+                        <button onClick={() => auth.signOut()} className="mt-8 text-sm text-gray-500 hover:underline">Logout</button>
                     </div>
                 </div>
             );
@@ -981,17 +961,17 @@ END:VCARD`;
             };
             return (
                 <div className="p-8">
-                    <h2 className="text-4xl font-bold text-gray-800 dark:text-gray-200">Dashboard</h2>
-                    <p className="text-gray-500 dark:text-gray-400">Welcome to your Social Medium CRM.</p>
+                    <h2 className="text-4xl font-bold text-gray-800">Dashboard</h2>
+                    <p className="text-gray-500">Welcome to your Social Medium CRM.</p>
                     
                     <div className="mt-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                        <button onClick={() => onNavigate('directory')} className="p-6 bg-white dark:bg-gray-800 rounded-lg shadow hover:bg-cyan-50 dark:hover:bg-gray-700 text-left transition">
-                            <h3 className="text-xl font-semibold text-gray-800 dark:text-gray-200">Directory</h3>
-                            <p className="text-gray-500 dark:text-gray-400 mt-2">Search and view all customers.</p>
+                        <button onClick={() => onNavigate('directory')} className="p-6 bg-white rounded-lg shadow hover:bg-cyan-50 text-left transition">
+                            <h3 className="text-xl font-semibold text-gray-800">Directory</h3>
+                            <p className="text-gray-500 mt-2">Search and view all customers.</p>
                         </button>
-                        <button onClick={() => onNavigate('reports')} className="p-6 bg-white dark:bg-gray-800 rounded-lg shadow hover:bg-cyan-50 dark:hover:bg-gray-700 text-left transition">
-                            <h3 className="text-xl font-semibold text-gray-800 dark:text-gray-200">Reports</h3>
-                            <p className="text-gray-500 dark:text-gray-400 mt-2">Filter customers by profile information.</p>
+                        <button onClick={() => onNavigate('reports')} className="p-6 bg-white rounded-lg shadow hover:bg-cyan-50 text-left transition">
+                            <h3 className="text-xl font-semibold text-gray-800">Reports</h3>
+                            <p className="text-gray-500 mt-2">Filter customers by profile information.</p>
                         </button>
                         {widgets.map((widget) => (
                             <DashboardWidget 
@@ -1075,7 +1055,7 @@ END:VCARD`;
                                     e.stopPropagation();
                                     onSelectCustomer({ id: customerId, given_name: customerName.split(' ')[0] });
                                 }}
-                                className="text-cyan-600 dark:text-cyan-400 hover:underline font-medium"
+                                className="text-cyan-600 hover:underline font-medium"
                             >
                                 {customerName}:
                             </button>
@@ -1096,7 +1076,7 @@ END:VCARD`;
                 const isOverdue = adjustedDueDate < today && !item.completed;
 
                 return (
-                    <span className={`text-sm ml-auto mr-2 ${isOverdue ? 'text-red-500 font-semibold' : 'text-gray-500 dark:text-gray-400'}`}>
+                    <span className={`text-sm ml-auto mr-2 ${isOverdue ? 'text-red-500 font-semibold' : 'text-gray-500'}`}>
                         Due: {formatSimpleDate(item.dueDate)}
                     </span>
                 );
@@ -1110,9 +1090,9 @@ END:VCARD`;
                                 type="checkbox" 
                                 checked={item.completed} 
                                 onChange={(e) => onUpdate(userId, item.id, e.target.checked)}
-                                className="h-5 w-5 text-cyan-600 border-gray-300 rounded focus:ring-cyan-500 dark:bg-gray-600 dark:border-gray-500"
+                                className="h-5 w-5 text-cyan-600 border-gray-300 rounded focus:ring-cyan-500"
                             />
-                            <span className={`flex-grow dark:text-gray-200 ${item.completed ? 'line-through text-gray-400 dark:text-gray-500' : ''}`}>
+                            <span className={`flex-grow ${item.completed ? 'line-through text-gray-400' : ''}`}>
                                 {renderTaskText(item)}
                             </span>
                             {renderDueDate(item)}
@@ -1122,20 +1102,20 @@ END:VCARD`;
             );
 
             return (
-                 <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
+                 <div className="bg-white rounded-lg shadow p-4">
                     <button onClick={() => onNavigate('checklist')} className="w-full text-left">
-                        <h3 className="text-xl font-semibold text-gray-800 dark:text-gray-200 mb-4 hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors">Urgent Tasks</h3>
+                        <h3 className="text-xl font-semibold text-gray-800 mb-4 hover:text-cyan-600 transition-colors">Urgent Tasks</h3>
                     </button>
                     <div className="space-y-4">
                         {categorizedTasks.overdue.length > 0 && (
                             <div>
-                                <h4 className="text-md font-semibold text-red-500 dark:text-red-400 mb-2">Overdue</h4>
+                                <h4 className="text-md font-semibold text-red-500 mb-2">Overdue</h4>
                                 {renderTaskList(categorizedTasks.overdue)}
                             </div>
                         )}
                          {categorizedTasks.dueToday.length > 0 && (
                             <div>
-                                <h4 className="text-md font-semibold text-gray-500 dark:text-gray-400 mb-2">Due Today</h4>
+                                <h4 className="text-md font-semibold text-gray-500 mb-2">Due Today</h4>
                                 {renderTaskList(categorizedTasks.dueToday)}
                             </div>
                         )}
@@ -1147,8 +1127,8 @@ END:VCARD`;
         function CalendarWidget({ calendarId }) {
             const calendarSrc = `https://calendar.google.com/calendar/embed?src=${encodeURIComponent(calendarId)}&mode=AGENDA&ctz=America/Los_Angeles`;
             return (
-                <div className="bg-white dark:bg-gray-800 rounded-lg shadow p-4">
-                    <h3 className="text-xl font-semibold text-gray-800 dark:text-gray-200 mb-4">Upcoming Events</h3>
+                <div className="bg-white rounded-lg shadow p-4">
+                    <h3 className="text-xl font-semibold text-gray-800 mb-4">Upcoming Events</h3>
                     <iframe 
                         src={calendarSrc} 
                         style={{ borderWidth: 0 }} 
@@ -1258,7 +1238,7 @@ END:VCARD`;
             }, [countToDisplay, widget.reportType, allCustomers, allOrders]);
             
             let borderColor = 'border-transparent';
-            let textColor = 'text-cyan-600 dark:text-cyan-400';
+            let textColor = 'text-cyan-600';
 
             if (widget.targetMin != null && widget.targetMax != null) {
                 const count = countToDisplay;
@@ -1277,24 +1257,24 @@ END:VCARD`;
                 if (widget.reverseRange) {
                     if (below) {
                         borderColor = 'border-green-500';
-                        textColor = 'text-green-600 dark:text-green-400';
+                        textColor = 'text-green-600';
                     } else if (above) {
                         borderColor = 'border-red-500';
-                        textColor = 'text-red-600 dark:text-red-400';
+                        textColor = 'text-red-600';
                     } else {
                         borderColor = 'border-yellow-500';
-                        textColor = 'text-yellow-600 dark:text-yellow-400';
+                        textColor = 'text-yellow-600';
                     }
                 } else {
                      if (below) {
                         borderColor = 'border-red-500';
-                        textColor = 'text-red-600 dark:text-red-400';
+                        textColor = 'text-red-600';
                     } else if (above) {
                         borderColor = 'border-green-500';
-                        textColor = 'text-green-600 dark:text-green-400';
+                        textColor = 'text-green-600';
                     } else {
                         borderColor = 'border-yellow-500';
-                        textColor = 'text-yellow-600 dark:text-yellow-400';
+                        textColor = 'text-yellow-600';
                     }
                 }
             }
@@ -1321,12 +1301,12 @@ END:VCARD`;
             const targetDifference = getTargetDifference();
 
             return (
-                <button onClick={() => onWidgetClick(widget)} className={`p-6 bg-white dark:bg-gray-800 rounded-lg shadow hover:bg-cyan-50 dark:hover:bg-gray-700 text-left transition flex flex-col justify-between border-4 ${borderColor}`}>
-                    <h3 className="text-xl font-semibold text-gray-800 dark:text-gray-200">{widget.name}</h3>
+                <button onClick={() => onWidgetClick(widget)} className={`p-6 bg-white rounded-lg shadow hover:bg-cyan-50 text-left transition flex flex-col justify-between border-4 ${borderColor}`}>
+                    <h3 className="text-xl font-semibold text-gray-800">{widget.name}</h3>
                     <div className="flex justify-between items-end mt-4">
                         <div>
                             <p className={`text-5xl font-bold ${textColor}`}>{countToDisplay}</p>
-                            <p className="text-gray-500 dark:text-gray-400">
+                            <p className="text-gray-500">
                                 {widget.reportType === 'customer' ? `Customers (${percentage}%)` : `Items (${percentage}%)`}
                             </p>
                         </div>
@@ -1358,18 +1338,18 @@ END:VCARD`;
 
             return (
                 <div className="p-8">
-                    <button onClick={onBack} className="mb-6 text-cyan-600 dark:text-cyan-400 hover:text-cyan-800 dark:hover:text-cyan-200"> &larr; Back to Dashboard</button>
-                    <h2 className="text-4xl font-bold text-gray-800 dark:text-gray-200">Customer Directory</h2>
+                    <button onClick={onBack} className="mb-6 text-cyan-600 hover:text-cyan-800"> &larr; Back to Dashboard</button>
+                    <h2 className="text-4xl font-bold text-gray-800">Customer Directory</h2>
                     <div className="mt-4">
-                        <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Filter customers..." className="w-full max-w-lg px-4 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"/>
+                        <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Filter customers..." className="w-full max-w-lg px-4 py-2 border rounded-md"/>
                     </div>
-                    <div className="mt-8 bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
-                        <ul className="divide-y divide-gray-200 dark:divide-gray-700">
+                    <div className="mt-8 bg-white rounded-lg shadow overflow-hidden">
+                        <ul className="divide-y divide-gray-200">
                             {filteredCustomers.map(customer => (
                                 <li key={customer.id}>
-                                    <button onClick={() => onSelectCustomer(customer)} className="w-full text-left p-4 hover:bg-gray-50 dark:hover:bg-gray-700">
-                                        <p className="font-semibold text-gray-800 dark:text-gray-200">{customer.given_name} {customer.family_name}</p>
-                                        <p className="text-sm text-gray-500 dark:text-gray-400">{customer.email_address || 'No email'}</p>
+                                    <button onClick={() => onSelectCustomer(customer)} className="w-full text-left p-4 hover:bg-gray-50">
+                                        <p className="font-semibold text-gray-800">{customer.given_name} {customer.family_name}</p>
+                                        <p className="text-sm text-gray-500">{customer.email_address || 'No email'}</p>
                                     </button>
                                 </li>
                             ))}
@@ -1609,30 +1589,30 @@ END:VCARD`;
                     <div className="flex-1 p-8 overflow-y-auto relative">
                         <button 
                             onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-                            className="absolute top-8 left-0 z-10 p-1 bg-white dark:bg-gray-900 rounded-r-md shadow-lg hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                            className="absolute top-8 left-0 z-10 p-1 bg-white rounded-r-md shadow-lg hover:bg-gray-100 transition-colors"
                             title={isSidebarOpen ? "Hide Sidebar" : "Show Sidebar"}
                         >
-                            <svg className={`w-6 h-6 text-gray-600 dark:text-gray-300 transform transition-transform ${isSidebarOpen ? '' : 'rotate-180'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7"></path></svg>
+                            <svg className={`w-6 h-6 text-gray-600 transform transition-transform ${isSidebarOpen ? '' : 'rotate-180'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 19l-7-7 7-7"></path></svg>
                         </button>
                         <div className="flex justify-between items-center mb-6">
-                            <button onClick={onBack} className="text-cyan-600 dark:text-cyan-400 hover:text-cyan-800 dark:hover:text-cyan-200"> &larr; Back to Dashboard</button>
+                            <button onClick={onBack} className="text-cyan-600 hover:text-cyan-800"> &larr; Back to Dashboard</button>
                             <div className="flex space-x-2 rounded-md shadow-sm" role="group">
-                                <button type="button" onClick={() => handleReportTypeChange('customer')} className={`px-4 py-2 text-sm font-medium ${reportType === 'customer' ? 'bg-cyan-600 text-white' : 'bg-white text-gray-900 border border-gray-200'} rounded-l-md hover:bg-gray-100 dark:bg-gray-700 dark:border-gray-600 dark:text-white dark:hover:text-white dark:hover:bg-gray-600`}>Customer Report</button>
-                                <button type="button" onClick={() => handleReportTypeChange('item')} className={`px-4 py-2 text-sm font-medium ${reportType === 'item' ? 'bg-cyan-600 text-white' : 'bg-white text-gray-900 border border-gray-200'} rounded-r-md hover:bg-gray-100 dark:bg-gray-700 dark:border-gray-600 dark:text-white dark:hover:text-white dark:hover:bg-gray-600`}>Item Report</button>
+                                <button type="button" onClick={() => handleReportTypeChange('customer')} className={`px-4 py-2 text-sm font-medium ${reportType === 'customer' ? 'bg-cyan-600 text-white' : 'bg-white text-gray-900 border border-gray-200'} rounded-l-md hover:bg-gray-100`}>Customer Report</button>
+                                <button type="button" onClick={() => handleReportTypeChange('item')} className={`px-4 py-2 text-sm font-medium ${reportType === 'item' ? 'bg-cyan-600 text-white' : 'bg-white text-gray-900 border border-gray-200'} rounded-r-md hover:bg-gray-100`}>Item Report</button>
                             </div>
-                            <button onClick={handleLocalRefresh} className="px-4 py-2 bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-gray-200 rounded-md text-sm font-medium hover:bg-gray-300 dark:hover:bg-gray-600 transition">Refresh Report</button>
-                            <span className="text-gray-600 dark:text-gray-300 font-semibold">{filteredAndSortedData.length} {reportType === 'customer' ? 'Customers' : 'Items'}</span>
+                            <button onClick={handleLocalRefresh} className="px-4 py-2 bg-gray-200 text-gray-800 rounded-md text-sm font-medium hover:bg-gray-300 transition">Refresh Report</button>
+                            <span className="text-gray-600 font-semibold">{filteredAndSortedData.length} {reportType === 'customer' ? 'Customers' : 'Items'}</span>
                         </div>
-                        <h2 className="text-4xl font-bold text-gray-800 dark:text-gray-200">{reportType === 'customer' ? 'Customer Report' : 'Item Report'}</h2>
-                        <div className="mt-8 bg-white dark:bg-gray-800 rounded-lg shadow overflow-x-auto">
-                            <table className="w-full text-sm text-left text-gray-500 dark:text-gray-400">
-                                <thead className="text-xs text-gray-700 dark:text-gray-400 uppercase bg-gray-50 dark:bg-gray-700">
+                        <h2 className="text-4xl font-bold text-gray-800">{reportType === 'customer' ? 'Customer Report' : 'Item Report'}</h2>
+                        <div className="mt-8 bg-white rounded-lg shadow overflow-x-auto">
+                            <table className="w-full text-sm text-left text-gray-500">
+                                <thead className="text-xs text-gray-700 uppercase bg-gray-50">
                                     <tr>{visibleFields.map(field => <SortableHeader key={field.key} field={field} setSortConfig={setSortConfig} sortConfig={sortConfig} setActiveFilterPopup={setActiveFieldFilterPopup} filters={fieldFilters} />)}</tr>
                                 </thead>
                                 <tbody>
-                                    {filteredAndSortedData.length === 0 && <tr><td colSpan={visibleFields.length} className="text-center p-4 text-gray-500 dark:text-gray-400">No customers match the current filters.</td></tr>}
+                                    {filteredAndSortedData.length === 0 && <tr><td colSpan={visibleFields.length} className="text-center p-4 text-gray-500">No customers match the current filters.</td></tr>}
                                     {filteredAndSortedData.map(row => (
-                                        <tr key={reportType === 'customer' ? row.id : row.item_uid} className="bg-white dark:bg-gray-800 border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600">
+                                        <tr key={reportType === 'customer' ? row.id : row.item_uid} className="bg-white border-b hover:bg-gray-50">
                                             {visibleFields.map(field => {
                                                 let cellContent = 'N/A';
                                                 let cellClassName = "px-6 py-4 whitespace-nowrap";
@@ -1640,10 +1620,10 @@ END:VCARD`;
                                                 if (reportType === 'customer') {
                                                     const customer = row;
                                                     if (field.key === 'given_name') {
-                                                        cellContent = <button onClick={() => onSelectCustomer(customer)} className="text-cyan-600 dark:text-cyan-400 hover:underline font-medium whitespace-nowrap">{customer.given_name || ''}</button>;
+                                                        cellContent = <button onClick={() => onSelectCustomer(customer)} className="text-cyan-600 hover:underline font-medium whitespace-nowrap">{customer.given_name || ''}</button>;
                                                     } else if (field.key === 'groups') {
-                                                        const groupNames = (customer.group_ids || []).map(id => ({ name: groupsMap.get(id) || id, color: 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300' }));
-                                                        const segmentNames = (customer.segment_ids || []).map(id => ({ name: segmentsMap.get(id) || id, color: 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300' }));
+                                                        const groupNames = (customer.group_ids || []).map(id => ({ name: groupsMap.get(id) || id, color: 'bg-gray-100 text-gray-800' }));
+                                                        const segmentNames = (customer.segment_ids || []).map(id => ({ name: segmentsMap.get(id) || id, color: 'bg-green-100 text-green-800' }));
                                                         cellContent = <div className="flex flex-wrap gap-1">{[...groupNames, ...segmentNames].map((pill, i) => <Pill key={i} text={pill.name} color={pill.color} />)}</div>;
                                                     } else if (field.key === 'last_sms_contact') {
                                                         cellContent = formatSimpleDate(getNestedValue(customer, field.path));
@@ -1658,7 +1638,7 @@ END:VCARD`;
                                                     const customerExists = customer && Object.keys(customer).length > 0;
                                                     
                                                     if (field.key === 'given_name') {
-                                                        cellContent = customerExists ? <button onClick={() => onSelectCustomer(customer)} className="text-cyan-600 dark:text-cyan-400 hover:underline font-medium whitespace-nowrap">{customer.given_name || ''}</button> : 'N/A';
+                                                        cellContent = customerExists ? <button onClick={() => onSelectCustomer(customer)} className="text-cyan-600 hover:underline font-medium whitespace-nowrap">{customer.given_name || ''}</button> : 'N/A';
                                                     } else if (field.key === 'note') {
                                                         cellContent = customerExists ? getNestedValue(row, field.path) || 'N/A' : 'N/A';
                                                         cellClassName = "px-6 py-4 whitespace-normal max-w-xs";
@@ -1697,8 +1677,8 @@ END:VCARD`;
                             {field.label}
                         </button>
                         {isSorted && (sortConfig.direction === 'ascending' ? <span className="ml-1">▲</span> : <span className="ml-1">▼</span>)}
-                        <button onClick={() => setActiveFilterPopup(field)} className="ml-2 text-gray-400 hover:text-gray-700 dark:hover:text-white">
-                            <svg className={`w-4 h-4 ${isFiltered ? 'text-cyan-600 dark:text-cyan-400' : ''}`} fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M3 3a1 1 0 011-1h12a1 1 0 011 1v3a1 1 0 01-.293.707L12 11.414V15a1 1 0 01-.293.707l-2 2A1 1 0 018 17v-5.586L3.293 6.707A1 1 0 013 6V3z" clipRule="evenodd"></path></svg>
+                        <button onClick={() => setActiveFilterPopup(field)} className="ml-2 text-gray-400 hover:text-gray-700">
+                            <svg className={`w-4 h-4 ${isFiltered ? 'text-cyan-600' : ''}`} fill="currentColor" viewBox="0 0 20 20"><path fillRule="evenodd" d="M3 3a1 1 0 011-1h12a1 1 0 011 1v3a1 1 0 01-.293.707L12 11.414V15a1 1 0 01-.293.707l-2 2A1 1 0 018 17v-5.586L3.293 6.707A1 1 0 013 6V3z" clipRule="evenodd"></path></svg>
                         </button>
                     </div>
                 </th>
@@ -1843,16 +1823,16 @@ END:VCARD`;
 
             return (
                 <div className="fixed inset-0 bg-black bg-opacity-25 flex items-center justify-center z-30" onClick={onClose}>
-                    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-4 w-full max-w-md" onClick={e => e.stopPropagation()}>
+                    <div className="bg-white rounded-lg shadow-xl p-4 w-full max-w-md" onClick={e => e.stopPropagation()}>
                         <div className="flex justify-between items-center">
-                            <h3 className="font-bold text-lg dark:text-gray-200">Filter by {field.label}</h3>
-                            <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:hover:text-white">&times;</button>
+                            <h3 className="font-bold text-lg">Filter by {field.label}</h3>
+                            <button onClick={onClose} className="text-gray-400 hover:text-gray-600">&times;</button>
                         </div>
                         
                         {field.key === 'groups' && (
-                            <div className="mt-4 border-b dark:border-gray-700 pb-4">
-                                <h4 className="text-sm font-semibold mb-2 dark:text-gray-300">Match Type</h4>
-                                <div className="flex space-x-4 text-sm dark:text-gray-300">
+                            <div className="mt-4 border-b pb-4">
+                                <h4 className="text-sm font-semibold mb-2">Match Type</h4>
+                                <div className="flex space-x-4 text-sm">
                                     <label className="flex items-center">
                                         <input type="radio" name="match-mode" value="any" checked={matchMode === 'any'} onChange={(e) => setMatchMode(e.target.value)} className="mr-1"/>
                                         Match Any (OR)
@@ -1869,19 +1849,19 @@ END:VCARD`;
                             {isDateField ? (
                                 <div className="grid grid-cols-2 gap-4">
                                     <div>
-                                        <h4 className="text-sm font-semibold mb-2 dark:text-gray-300">Match These</h4>
-                                        <select value={dateMode} onChange={(e) => setDateMode(e.target.value)} className="w-full px-2 py-1 border rounded-md text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white mb-2">
+                                        <h4 className="text-sm font-semibold mb-2">Match These</h4>
+                                        <select value={dateMode} onChange={(e) => setDateMode(e.target.value)} className="w-full px-2 py-1 border rounded-md text-sm mb-2">
                                             <option value="relative">Relative Range</option>
                                             <option value="custom">Custom Range</option>
                                         </select>
                                         { dateMode === 'relative' ? (
                                             <div className="flex space-x-2">
-                                                <select name="period" value={relativePeriod} onChange={(e) => handleRelativeDateChange(e, 'included')} className="w-1/2 px-2 py-1 border rounded-md text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white">
+                                                <select name="period" value={relativePeriod} onChange={(e) => handleRelativeDateChange(e, 'included')} className="w-1/2 px-2 py-1 border rounded-md text-sm">
                                                     <option value="">-</option>
                                                     <option value="This">This</option>
                                                     <option value="Last">Last</option>
                                                 </select>
-                                                <select name="unit" value={relativeUnit} onChange={(e) => handleRelativeDateChange(e, 'included')} className="w-1/2 px-2 py-1 border rounded-md text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white" disabled={!relativePeriod}>
+                                                <select name="unit" value={relativeUnit} onChange={(e) => handleRelativeDateChange(e, 'included')} className="w-1/2 px-2 py-1 border rounded-md text-sm" disabled={!relativePeriod}>
                                                     <option value="">-</option>
                                                     <option value="Day">Day</option>
                                                     <option value="Week">Week</option>
@@ -1892,25 +1872,25 @@ END:VCARD`;
                                             </div>
                                         ) : (
                                             <>
-                                                <input type="date" name="startDate" value={dateRange.startDate} onChange={e => handleDateRangeChange(e, 'included')} className="w-full px-2 py-1 border rounded-md text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white mb-2"/>
-                                                <input type="date" name="endDate" value={dateRange.endDate} onChange={e => handleDateRangeChange(e, 'included')} className="w-full px-2 py-1 border rounded-md text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white"/>
+                                                <input type="date" name="startDate" value={dateRange.startDate} onChange={e => handleDateRangeChange(e, 'included')} className="w-full px-2 py-1 border rounded-md text-sm mb-2"/>
+                                                <input type="date" name="endDate" value={dateRange.endDate} onChange={e => handleDateRangeChange(e, 'included')} className="w-full px-2 py-1 border rounded-md text-sm"/>
                                             </>
                                         )}
                                     </div>
                                     <div>
-                                        <h4 className="text-sm font-semibold mb-2 dark:text-gray-300">Do Not Match (NOT)</h4>
-                                        <select value={dateMode} onChange={(e) => setDateMode(e.target.value)} className="w-full px-2 py-1 border rounded-md text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white mb-2">
+                                        <h4 className="text-sm font-semibold mb-2">Do Not Match (NOT)</h4>
+                                        <select value={dateMode} onChange={(e) => setDateMode(e.target.value)} className="w-full px-2 py-1 border rounded-md text-sm mb-2">
                                             <option value="relative">Relative Range</option>
                                             <option value="custom">Custom Range</option>
                                         </select>
                                         { dateMode === 'relative' ? (
                                             <div className="flex space-x-2">
-                                                <select name="period" value={excludedRelativePeriod} onChange={(e) => handleRelativeDateChange(e, 'excluded')} className="w-1/2 px-2 py-1 border rounded-md text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white">
+                                                <select name="period" value={excludedRelativePeriod} onChange={(e) => handleRelativeDateChange(e, 'excluded')} className="w-1/2 px-2 py-1 border rounded-md text-sm">
                                                     <option value="">-</option>
                                                     <option value="This">This</option>
                                                     <option value="Last">Last</option>
                                                 </select>
-                                                <select name="unit" value={excludedRelativeUnit} onChange={(e) => handleRelativeDateChange(e, 'excluded')} className="w-1/2 px-2 py-1 border rounded-md text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white" disabled={!excludedRelativePeriod}>
+                                                <select name="unit" value={excludedRelativeUnit} onChange={(e) => handleRelativeDateChange(e, 'excluded')} className="w-1/2 px-2 py-1 border rounded-md text-sm" disabled={!excludedRelativePeriod}>
                                                     <option value="">-</option>
                                                     <option value="Day">Day</option>
                                                     <option value="Week">Week</option>
@@ -1921,33 +1901,33 @@ END:VCARD`;
                                             </div>
                                         ) : (
                                             <>
-                                                <input type="date" name="startDate" value={excludedDateRange.startDate} onChange={e => handleDateRangeChange(e, 'excluded')} className="w-full px-2 py-1 border rounded-md text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white mb-2"/>
-                                                <input type="date" name="endDate" value={excludedDateRange.endDate} onChange={e => handleDateRangeChange(e, 'excluded')} className="w-full px-2 py-1 border rounded-md text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white"/>
+                                                <input type="date" name="startDate" value={excludedDateRange.startDate} onChange={e => handleDateRangeChange(e, 'excluded')} className="w-full px-2 py-1 border rounded-md text-sm mb-2"/>
+                                                <input type="date" name="endDate" value={excludedDateRange.endDate} onChange={e => handleDateRangeChange(e, 'excluded')} className="w-full px-2 py-1 border rounded-md text-sm"/>
                                             </>
                                         )}
                                     </div>
                                 </div>
                             ) : (
                                 <>
-                                    <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Search values..." className="w-full px-2 py-1 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white mb-2"/>
+                                    <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Search values..." className="w-full px-2 py-1 border rounded-md mb-2"/>
                                     <div className="grid grid-cols-2 gap-4">
                                         <div>
-                                            <h4 className="text-sm font-semibold mb-2 dark:text-gray-300">Match These</h4>
-                                            <div className="max-h-40 overflow-y-auto border rounded-md p-2 space-y-1 dark:border-gray-700">
+                                            <h4 className="text-sm font-semibold mb-2">Match These</h4>
+                                            <div className="max-h-40 overflow-y-auto border rounded-md p-2 space-y-1">
                                                 {sortedAndFilteredValues.map(value => (
-                                                    <label key={`include-${value}`} className="flex items-center text-sm hover:bg-gray-50 dark:hover:bg-gray-700 rounded p-1 dark:text-gray-300">
-                                                        <input type="checkbox" checked={checkedValues.has(value)} onChange={() => handleCheck(value, false)} className="mr-2 h-4 w-4 text-cyan-600 border-gray-300 rounded focus:ring-cyan-500 dark:bg-gray-600 dark:border-gray-500"/>
+                                                    <label key={`include-${value}`} className="flex items-center text-sm hover:bg-gray-50 rounded p-1">
+                                                        <input type="checkbox" checked={checkedValues.has(value)} onChange={() => handleCheck(value, false)} className="mr-2 h-4 w-4 text-cyan-600 border-gray-300 rounded focus:ring-cyan-500"/>
                                                         <span className="truncate">{value}</span>
                                                     </label>
                                                 ))}
                                             </div>
                                         </div>
                                         <div>
-                                            <h4 className="text-sm font-semibold mb-2 dark:text-gray-300">Do Not Match (NOT)</h4>
-                                            <div className="max-h-40 overflow-y-auto border rounded-md p-2 space-y-1 dark:border-gray-700">
+                                            <h4 className="text-sm font-semibold mb-2">Do Not Match (NOT)</h4>
+                                            <div className="max-h-40 overflow-y-auto border rounded-md p-2 space-y-1">
                                                 {sortedAndFilteredValues.map(value => (
-                                                    <label key={`exclude-${value}`} className="flex items-center text-sm hover:bg-gray-50 dark:hover:bg-gray-700 rounded p-1 dark:text-gray-300">
-                                                        <input type="checkbox" checked={excludedValues.has(value)} onChange={() => handleCheck(value, true)} className="mr-2 h-4 w-4 text-red-600 border-gray-300 rounded focus:ring-red-500 dark:bg-gray-600 dark:border-gray-500"/>
+                                                    <label key={`exclude-${value}`} className="flex items-center text-sm hover:bg-gray-50 rounded p-1">
+                                                        <input type="checkbox" checked={excludedValues.has(value)} onChange={() => handleCheck(value, true)} className="mr-2 h-4 w-4 text-red-600 border-gray-300 rounded focus:ring-red-500"/>
                                                         <span className="truncate">{value}</span>
                                                     </label>
                                                 ))}
@@ -1961,7 +1941,7 @@ END:VCARD`;
                         <div className="mt-4 flex justify-between items-center">
                             <button onClick={handleRemoveFilter} className="px-4 py-2 text-sm text-red-600 hover:text-red-800">Remove Filter</button>
                             <div className="space-x-2">
-                                <button onClick={onClose} className="px-4 py-2 bg-gray-200 dark:bg-gray-600 dark:text-white rounded-md text-sm">Cancel</button>
+                                <button onClick={onClose} className="px-4 py-2 bg-gray-200 rounded-md text-sm">Cancel</button>
                                 <button onClick={handleApply} className="px-4 py-2 bg-cyan-600 text-white rounded-md text-sm">OK</button>
                             </div>
                         </div>
@@ -2005,8 +1985,8 @@ END:VCARD`;
 
             return (
                 <>
-                <div className="w-80 bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-700 flex flex-col p-4 space-y-2 overflow-y-auto">
-                    <h2 className="text-xl font-bold dark:text-gray-200">Report Controls</h2>
+                <div className="w-80 bg-white border-r border-gray-200 flex flex-col p-4 space-y-2 overflow-y-auto">
+                    <h2 className="text-xl font-bold">Report Controls</h2>
                     <div className="space-y-2">
                         <button onClick={onSaveReportClick} className="w-full px-4 py-2 bg-cyan-600 text-white rounded-md shadow-sm hover:bg-cyan-700">Save New Report</button>
                     </div>
@@ -2015,13 +1995,13 @@ END:VCARD`;
                         <div className="max-h-60 overflow-y-auto">
                             {savedReports.map((r) => (
                                 <div key={r.id} className="flex items-center justify-between text-sm group pr-1">
-                                    <button onClick={() => onLoadReport(r)} className="hover:underline text-left flex-grow truncate py-1 dark:text-gray-300">
+                                    <button onClick={() => onLoadReport(r)} className="hover:underline text-left flex-grow truncate py-1">
                                         {r.name}
                                         <span className="text-gray-400 ml-1">{r.isPersonal ? '(Personal)' : '(Shared)'}</span>
                                     </button>
                                     <div className="hidden group-hover:flex items-center flex-shrink-0">
-                                        <button onClick={() => setReportToEdit(r)} className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded text-xs">✏️</button>
-                                        <button onClick={() => setDeleteModal(r)} className="p-1 hover:bg-gray-200 dark:hover:bg-gray-700 rounded text-xs">🗑️</button>
+                                        <button onClick={() => setReportToEdit(r)} className="p-1 hover:bg-gray-200 rounded text-xs">✏️</button>
+                                        <button onClick={() => setDeleteModal(r)} className="p-1 hover:bg-gray-200 rounded text-xs">🗑️</button>
                                     </div>
                                 </div>
                             ))}
@@ -2032,8 +2012,8 @@ END:VCARD`;
                     <SidebarSection title="Fields" id="fields" isOpen={openSections.fields} onToggle={toggleSection}>
                         <div className="mt-2 space-y-1 max-h-60 overflow-y-auto">
                            {fields.map(field => (
-                                <label key={field.key} className="flex items-center text-sm p-1 hover:bg-gray-50 dark:hover:bg-gray-700 rounded dark:text-gray-300">
-                                    <input type="checkbox" checked={field.visible} onChange={() => handleFieldToggle(field.key)} className="mr-2 h-4 w-4 text-cyan-600 border-gray-300 rounded focus:ring-cyan-500 dark:bg-gray-600 dark:border-gray-500"/>
+                                <label key={field.key} className="flex items-center text-sm p-1 hover:bg-gray-50 rounded">
+                                    <input type="checkbox" checked={field.visible} onChange={() => handleFieldToggle(field.key)} className="mr-2 h-4 w-4 text-cyan-600 border-gray-300 rounded focus:ring-cyan-500"/>
                                     <span className={field.isCustom ? 'italic' : ''}>{field.label}</span>
                                 </label>
                             ))}
@@ -2057,65 +2037,65 @@ END:VCARD`;
 
             return (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-40">
-                    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-sm">
-                        <h3 className="font-bold text-lg dark:text-gray-200">{reportToEdit?.id ? 'Edit Report' : 'Save Report'}</h3>
-                        <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">Enter a name for this report configuration.</p>
+                    <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-sm">
+                        <h3 className="font-bold text-lg">{reportToEdit?.id ? 'Edit Report' : 'Save Report'}</h3>
+                        <p className="text-sm text-gray-500 mt-2">Enter a name for this report configuration.</p>
                         <input 
                             type="text" 
                             value={name} 
                             onChange={(e) => setName(e.target.value)} 
-                            className="w-full mt-4 px-3 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white" 
+                            className="w-full mt-4 px-3 py-2 border rounded-md" 
                             placeholder="Report Name" 
                         />
                          {isWidget && (
                             <div className="mt-4">
                                 <div className="flex items-center justify-between mb-2">
-                                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Target Range</label>
-                                    <select value={targetType} onChange={e => setTargetType(e.target.value)} className="text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white rounded-md">
+                                    <label className="block text-sm font-medium text-gray-700">Target Range</label>
+                                    <select value={targetType} onChange={e => setTargetType(e.target.value)} className="text-sm rounded-md">
                                         <option value="count">Count</option>
                                         <option value="percentage">Percentage</option>
                                     </select>
                                 </div>
                                 <div className="grid grid-cols-2 gap-4">
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Min</label>
+                                        <label className="block text-sm font-medium text-gray-700">Min</label>
                                         <input 
                                             type="number" 
                                             value={targetMin} 
                                             onChange={(e) => setTargetMin(e.target.value)} 
-                                            className="w-full mt-1 px-3 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white" 
+                                            className="w-full mt-1 px-3 py-2 border rounded-md" 
                                             placeholder={targetType === 'count' ? "e.g., 65" : "e.g., 10"}
                                         />
                                     </div>
                                     <div>
-                                        <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Max</label>
+                                        <label className="block text-sm font-medium text-gray-700">Max</label>
                                         <input 
                                             type="number" 
                                             value={targetMax} 
                                             onChange={(e) => setTargetMax(e.target.value)} 
-                                            className="w-full mt-1 px-3 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white" 
+                                            className="w-full mt-1 px-3 py-2 border rounded-md" 
                                             placeholder={targetType === 'count' ? "e.g., 75" : "e.g., 15"}
                                         />
                                     </div>
                                 </div>
-                                <label className="flex items-center mt-2 text-sm dark:text-gray-300">
+                                <label className="flex items-center mt-2 text-sm">
                                     <input type="checkbox" checked={reverseRange} onChange={e => setReverseRange(e.target.checked)} className="mr-2"/>
                                     Reverse Target Colors (Lower is better)
                                 </label>
                             </div>
                         )}
-                        <label className="flex items-center mt-4 text-sm dark:text-gray-300">
+                        <label className="flex items-center mt-4 text-sm">
                             <input type="checkbox" checked={isWidget} onChange={e => setIsWidget(e.target.checked)} className="mr-2"/>
                             Add as a Dashboard Widget
                         </label>
                         {isAdmin && (
-                            <label className="flex items-center mt-2 text-sm dark:text-gray-300">
+                            <label className="flex items-center mt-2 text-sm">
                                 <input type="checkbox" checked={isShared} onChange={(e) => setIsShared(e.target.checked)} className="mr-2"/>
                                 Share with organization
                             </label>
                         )}
                         <div className="mt-6 flex justify-end space-x-2">
-                            <button onClick={onCancel} className="px-4 py-2 bg-gray-200 dark:bg-gray-600 dark:text-white rounded-md">Cancel</button>
+                            <button onClick={onCancel} className="px-4 py-2 bg-gray-200 rounded-md">Cancel</button>
                             <button onClick={() => onSave(name, isWidget, isShared, targetMin, targetMax, targetType, reverseRange)} className="px-4 py-2 bg-cyan-600 text-white rounded-md text-sm">OK</button>
                         </div>
                     </div>
@@ -2126,11 +2106,11 @@ END:VCARD`;
         function DeleteModal({ report, onDelete, onCancel }) {
             return (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-40">
-                    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-sm">
-                        <h3 className="font-bold text-lg dark:text-gray-200">Delete Report</h3>
-                        <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">Are you sure you want to delete the report "{report.name}"? This action cannot be undone.</p>
+                    <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-sm">
+                        <h3 className="font-bold text-lg">Delete Report</h3>
+                        <p className="text-sm text-gray-500 mt-2">Are you sure you want to delete the report "{report.name}"? This action cannot be undone.</p>
                         <div className="mt-6 flex justify-end space-x-2">
-                            <button onClick={onCancel} className="px-4 py-2 bg-gray-200 dark:bg-gray-600 dark:text-white rounded-md">Cancel</button>
+                            <button onClick={onCancel} className="px-4 py-2 bg-gray-200 rounded-md">Cancel</button>
                             <button onClick={onDelete} className="px-4 py-2 bg-red-600 text-white rounded-md">Delete</button>
                         </div>
                     </div>
@@ -2189,59 +2169,59 @@ END:VCARD`;
 
             return (
                 <div className="p-8">
-                    <button onClick={onBack} className="mb-6 text-cyan-600 dark:text-cyan-400 hover:text-cyan-800 dark:hover:text-cyan-200"> &larr; Back to Dashboard</button>
-                    <h2 className="text-4xl font-bold text-gray-800 dark:text-gray-200">Admin Panel</h2>
-                    <p className="text-gray-500 dark:text-gray-400 mt-2">Manage user accounts and data.</p>
+                    <button onClick={onBack} className="mb-6 text-cyan-600 hover:text-cyan-800"> &larr; Back to Dashboard</button>
+                    <h2 className="text-4xl font-bold text-gray-800">Admin Panel</h2>
+                    <p className="text-gray-500 mt-2">Manage user accounts and data.</p>
                     
-                    <div className="mt-8 bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-                        <h3 className="text-xl font-semibold text-gray-800 dark:text-gray-200">Settings</h3>
+                    <div className="mt-8 bg-white rounded-lg shadow p-6">
+                        <h3 className="text-xl font-semibold text-gray-800">Settings</h3>
                         <div className="mt-4">
-                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Public Google Calendar ID</label>
+                            <label className="block text-sm font-medium text-gray-700">Public Google Calendar ID</label>
                             <div className="flex items-center space-x-2 mt-1">
                                 <input 
                                     type="text" 
                                     value={calendarIdInput} 
                                     onChange={e => setCalendarIdInput(e.target.value)} 
                                     placeholder="your-calendar-id@group.calendar.google.com" 
-                                    className="flex-grow w-full px-3 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                                    className="flex-grow w-full px-3 py-2 border rounded-md"
                                 />
                                 <button onClick={handleSaveCalendarId} className="px-4 py-2 bg-cyan-600 text-white rounded-md hover:bg-cyan-700">Save</button>
                             </div>
                         </div>
                         <div className="mt-4">
-                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Cheat Sheet Content</label>
+                            <label className="block text-sm font-medium text-gray-700">Cheat Sheet Content</label>
                             <div className="flex items-center space-x-2 mt-1">
                                 <textarea
                                     value={cheatSheetInput}
                                     onChange={e => setCheatSheetInput(e.target.value)}
                                     placeholder="Enter cheat sheet content here..."
-                                    className="flex-grow w-full h-40 px-3 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                                    className="flex-grow w-full h-40 px-3 py-2 border rounded-md"
                                 />
                             </div>
                             <button onClick={handleSaveCheatSheet} className="mt-2 px-4 py-2 bg-cyan-600 text-white rounded-md hover:bg-cyan-700">Save Cheat Sheet</button>
                         </div>
                     </div>
 
-                     <div className="mt-8 bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-                        <h3 className="text-xl font-semibold text-gray-800 dark:text-gray-200">Version Information</h3>
-                        <div className="mt-4 text-sm text-gray-600 dark:text-gray-400">
+                     <div className="mt-8 bg-white rounded-lg shadow p-6">
+                        <h3 className="text-xl font-semibold text-gray-800">Version Information</h3>
+                        <div className="mt-4 text-sm text-gray-600">
                             <p><span className="font-semibold">Version:</span> {CRM_VERSION}</p>
                             <p><span className="font-semibold">Last Update:</span> {CRM_VERSION_DESCRIPTION}</p>
                         </div>
                     </div>
 
                     <div className="mt-8">
-                        <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Filter users by email or ID..." className="w-full max-w-lg px-4 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"/>
+                        <input type="text" value={searchTerm} onChange={e => setSearchTerm(e.target.value)} placeholder="Filter users by email or ID..." className="w-full max-w-lg px-4 py-2 border rounded-md"/>
                     </div>
                     
-                    <div className="mt-8 bg-white dark:bg-gray-800 rounded-lg shadow overflow-hidden">
-                        <ul className="divide-y divide-gray-200 dark:divide-gray-700">
+                    <div className="mt-8 bg-white rounded-lg shadow overflow-hidden">
+                        <ul className="divide-y divide-gray-200">
                             {filteredUsers.map(user => (
-                                <li key={user.id} className="w-full p-4 hover:bg-gray-50 dark:hover:bg-gray-700 flex justify-between items-center">
+                                <li key={user.id} className="w-full p-4 hover:bg-gray-50 flex justify-between items-center">
                                     <div>
-                                        <p className="font-semibold text-gray-800 dark:text-gray-200">{user.email || 'No Email'}</p>
-                                        <p className="text-sm text-gray-500 dark:text-gray-400">UID: {user.id}</p>
-                                        <p className="text-sm text-gray-500 dark:text-gray-400">Admin: {user.isAdmin ? 'Yes' : 'No'}</p>
+                                        <p className="font-semibold text-gray-800">{user.email || 'No Email'}</p>
+                                        <p className="text-sm text-gray-500">UID: {user.id}</p>
+                                        <p className="text-sm text-gray-500">Admin: {user.isAdmin ? 'Yes' : 'No'}</p>
                                     </div>
                                     <button onClick={() => handleDeleteUser(user.id)} className="px-4 py-2 bg-red-600 text-white rounded-md text-sm hover:bg-red-700">
                                         Delete User
@@ -2340,7 +2320,7 @@ END:VCARD`;
                                     e.stopPropagation();
                                     onSelectCustomer({ id: customerId, given_name: customerName.split(' ')[0] });
                                 }}
-                                className="text-cyan-600 dark:text-cyan-400 hover:underline font-medium"
+                                className="text-cyan-600 hover:underline font-medium"
                             >
                                 {customerName}:
                             </button>
@@ -2362,7 +2342,7 @@ END:VCARD`;
                 const isOverdue = adjustedDueDate < today && !item.completed;
 
                 return (
-                    <span className={`text-sm ml-auto mr-2 ${isOverdue ? 'text-red-500 font-semibold' : 'text-gray-500 dark:text-gray-400'}`}>
+                    <span className={`text-sm ml-auto mr-2 ${isOverdue ? 'text-red-500 font-semibold' : 'text-gray-500'}`}>
                         Due: {formatSimpleDate(item.dueDate)}
                     </span>
                 );
@@ -2376,9 +2356,9 @@ END:VCARD`;
                                 type="checkbox" 
                                 checked={item.completed} 
                                 onChange={(e) => onUpdate(userId, item.id, e.target.checked)}
-                                className="h-5 w-5 text-cyan-600 border-gray-300 rounded focus:ring-cyan-500 dark:bg-gray-600 dark:border-gray-500"
+                                className="h-5 w-5 text-cyan-600 border-gray-300 rounded focus:ring-cyan-500"
                             />
-                            <span className={`flex-grow dark:text-gray-200 ${item.completed ? 'line-through text-gray-400 dark:text-gray-500' : ''}`}>
+                            <span className={`${item.completed ? 'line-through text-gray-400' : ''}`}>
                                 {renderTaskText(item)}
                             </span>
                             {renderDueDate(item)}
@@ -2394,7 +2374,7 @@ END:VCARD`;
                 if (items.length === 0) return null;
                 return (
                     <div>
-                        <h4 className="text-md font-semibold text-gray-500 dark:text-gray-400 mb-2">{title}</h4>
+                        <h4 className="text-md font-semibold text-gray-500 mb-2">{title}</h4>
                         {renderTaskList(items, userId)}
                     </div>
                 );
@@ -2402,28 +2382,28 @@ END:VCARD`;
 
             return (
                 <div className="p-8">
-                    <button onClick={onBack} className="mb-6 text-cyan-600 dark:text-cyan-400 hover:text-cyan-800 dark:hover:text-cyan-200"> &larr; Back to Dashboard</button>
-                    <h2 className="text-4xl font-bold text-gray-800 dark:text-gray-200">{isAdmin ? 'All Checklists' : 'My Checklist'}</h2>
-                    <p className="text-gray-500 dark:text-gray-400 mt-2">{isAdmin ? 'View and manage all user checklists.' : 'Personal tasks and reminders.'}</p>
+                    <button onClick={onBack} className="mb-6 text-cyan-600 hover:text-cyan-800"> &larr; Back to Dashboard</button>
+                    <h2 className="text-4xl font-bold text-gray-800">{isAdmin ? 'All Checklists' : 'My Checklist'}</h2>
+                    <p className="text-gray-500 mt-2">{isAdmin ? 'View and manage all user checklists.' : 'Personal tasks and reminders.'}</p>
                     
-                    <div className="mt-8 bg-white dark:bg-gray-800 rounded-lg shadow p-6">
+                    <div className="mt-8 bg-white rounded-lg shadow p-6">
                          <form onSubmit={handleAddItem} className="flex space-x-2 mb-6">
                             <input 
                                 type="text"
                                 value={newItemText}
                                 onChange={(e) => setNewItemText(e.target.value)}
                                 placeholder="Add a new item..."
-                                className="flex-grow px-4 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                                className="flex-grow px-4 py-2 border rounded-md"
                             />
                             <button type="submit" className="px-4 py-2 bg-cyan-600 text-white rounded-md hover:bg-cyan-700">Add</button>
                         </form>
                         
                         {isAdmin ? (
                             <div className="space-y-6">
-                                {Object.values(categorizedChecklist).length === 0 && <p className="text-gray-500 text-center dark:text-gray-400">No checklists found.</p>}
+                                {Object.values(categorizedChecklist).length === 0 && <p className="text-gray-500 text-center">No checklists found.</p>}
                                 {Object.values(categorizedChecklist).map(userList => (
                                     <div key={userList.userId}>
-                                        <h3 className="text-lg font-semibold text-gray-700 dark:text-gray-300 border-b border-gray-200 dark:border-gray-700 pb-2 mb-3">
+                                        <h3 className="text-lg font-semibold text-gray-700 border-b border-gray-200 pb-2 mb-3">
                                             {userList.userIdentifier}
                                         </h3>
                                         <div className="space-y-4">
@@ -2440,7 +2420,7 @@ END:VCARD`;
                                 {renderCategory("Due Today", categorizedChecklist.dueToday, user.uid)}
                                 {renderCategory("Not Yet Due", categorizedChecklist.notYetDue, user.uid)}
                                 {categorizedChecklist.overdue.length === 0 && categorizedChecklist.dueToday.length === 0 && categorizedChecklist.notYetDue.length === 0 &&
-                                    <p className="text-gray-500 text-center dark:text-gray-400">No items on your checklist.</p>
+                                    <p className="text-gray-500 text-center">No items on your checklist.</p>
                                 }
                             </div>
                         )}
@@ -2459,14 +2439,14 @@ END:VCARD`;
 
             return (
                  <div className="fixed inset-0 bg-black bg-opacity-50 flex items-start justify-center z-40 overflow-y-auto p-4 pt-16">
-                    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-4xl max-h-full" onClick={e => e.stopPropagation()}>
+                    <div className="bg-white rounded-lg shadow-xl w-full max-w-4xl max-h-full" onClick={e => e.stopPropagation()}>
                          <div className="p-8">
                             <div className="flex justify-between items-center">
-                                <h2 className="text-3xl font-bold text-gray-800 dark:text-gray-200">Cheat Sheet</h2>
-                                <button onClick={onClose} className="text-gray-400 hover:text-gray-600 dark:hover:text-white text-3xl">&times;</button>
+                                <h2 className="text-3xl font-bold text-gray-800">Cheat Sheet</h2>
+                                <button onClick={onClose} className="text-gray-400 hover:text-gray-600 text-3xl">&times;</button>
                             </div>
-                            <div className="mt-6 p-4 bg-gray-50 dark:bg-gray-700 rounded-md max-h-96 overflow-y-auto">
-                                <p className="text-gray-800 dark:text-gray-300 whitespace-pre-wrap">{content || 'No content has been set for the cheat sheet yet.'}</p>
+                            <div className="mt-6 p-4 bg-gray-50 rounded-md max-h-96 overflow-y-auto">
+                                <p className="text-gray-800 whitespace-pre-wrap">{content || 'No content has been set for the cheat sheet yet.'}</p>
                             </div>
                         </div>
                     </div>
@@ -2484,11 +2464,11 @@ END:VCARD`;
 
             return (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-start justify-center z-40 overflow-y-auto p-4 pt-16">
-                    <div className="bg-gray-100 dark:bg-gray-900 rounded-lg shadow-xl w-full max-w-4xl max-h-full" onClick={e => e.stopPropagation()}>
+                    <div className="bg-gray-100 rounded-lg shadow-xl w-full max-w-4xl max-h-full" onClick={e => e.stopPropagation()}>
                         {isLoading && !customer.orders ? (
                             <div className="flex justify-center items-center h-64">
                                 <div className="spinner"></div>
-                                <p className="ml-2 dark:text-gray-300">Fetching Details...</p>
+                                <p className="ml-2">Fetching Details...</p>
                             </div>
                         ) : (
                             <CustomerProfile 
@@ -2567,7 +2547,7 @@ END:VCARD`;
                 const isOverdue = adjustedDueDate < today && !item.completed;
 
                 return (
-                    <span className={`text-sm ml-auto mr-2 ${isOverdue ? 'text-red-500 font-semibold' : 'text-gray-500 dark:text-gray-400'}`}>
+                    <span className={`text-sm ml-auto mr-2 ${isOverdue ? 'text-red-500 font-semibold' : 'text-gray-500'}`}>
                         Due: {formatSimpleDate(item.dueDate)}
                     </span>
                 );
@@ -2575,10 +2555,10 @@ END:VCARD`;
 
             return (
                 <div className="p-8">
-                    <button onClick={onBack} className="mb-6 text-cyan-600 dark:text-cyan-400 hover:text-cyan-800 dark:hover:text-cyan-200"> &larr; Back</button>
-                    <div className="bg-white dark:bg-gray-800 p-8 rounded-lg shadow-md">
-                        <h2 className="text-4xl font-bold text-gray-800 dark:text-gray-200">{customer.given_name} {customer.family_name}</h2>
-                        <p className="text-gray-500 dark:text-gray-400">Customer since {formatSimpleDate(customer.created_at)}</p>
+                    <button onClick={onBack} className="mb-6 text-cyan-600 hover:text-cyan-800"> &larr; Back</button>
+                    <div className="bg-white p-8 rounded-lg shadow-md">
+                        <h2 className="text-4xl font-bold text-gray-800">{customer.given_name} {customer.family_name}</h2>
+                        <p className="text-gray-500">Customer since {formatSimpleDate(customer.created_at)}</p>
                         
                         <div className="mt-8 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
                             <InfoCard title="Contact Information">
@@ -2612,9 +2592,9 @@ END:VCARD`;
                                                     type="checkbox" 
                                                     checked={task.completed} 
                                                     onChange={(e) => onUpdateTask(task.userId, task.id, e.target.checked)}
-                                                    className="h-5 w-5 text-cyan-600 border-gray-300 rounded focus:ring-cyan-500 dark:bg-gray-600 dark:border-gray-500"
+                                                    className="h-5 w-5 text-cyan-600 border-gray-300 rounded focus:ring-cyan-500"
                                                 />
-                                                <span className={`flex-grow dark:text-gray-200 ${task.completed ? 'line-through text-gray-400 dark:text-gray-500' : ''}`}>
+                                                <span className={`${task.completed ? 'line-through text-gray-400' : ''}`}>
                                                     {task.text.split('@@')[1].split(/:(.*)/s)[1]}
                                                 </span>
                                                 {renderDueDate(task)}
@@ -2625,30 +2605,30 @@ END:VCARD`;
                                         ))}
                                     </ul>
                                 ) : (
-                                    <p className="text-gray-500 dark:text-gray-400">No tasks associated with this customer.</p>
+                                    <p className="text-gray-500">No tasks associated with this customer.</p>
                                 )}
                             </InfoCard>
                             <InfoCard title="Notes" className="md:col-span-3">
-                                <p className="text-gray-800 dark:text-gray-300 whitespace-pre-wrap">{customer.note || 'N/A'}</p>
-                                <button onClick={() => onEditNoteRequest(customer)} className="mt-2 px-3 py-1 bg-gray-200 dark:bg-gray-700 text-sm rounded-md hover:bg-gray-300 dark:hover:bg-gray-600">Edit</button>
+                                <p className="text-gray-800 whitespace-pre-wrap">{customer.note || 'N/A'}</p>
+                                <button onClick={() => onEditNoteRequest(customer)} className="mt-2 px-3 py-1 bg-gray-200 text-sm rounded-md hover:bg-gray-300">Edit</button>
                             </InfoCard>
                             <InfoCard title="Custom Fields" className="md:col-span-3">
                                 <div className="grid grid-cols-2 gap-x-8">
                                     <div>
-                                        <h4 className="font-semibold text-gray-600 dark:text-gray-400 border-b dark:border-gray-700 pb-1 mb-2">True</h4>
-                                        <ul className="space-y-1 dark:text-gray-300">
+                                        <h4 className="font-semibold text-gray-600 border-b pb-1 mb-2">True</h4>
+                                        <ul className="space-y-1">
                                             {booleanAttributes.true.length > 0 ? booleanAttributes.true.map(name => <li key={name}>{name}</li>) : <li className="text-gray-400">None</li>}
                                         </ul>
                                     </div>
                                     <div>
-                                        <h4 className="font-semibold text-gray-600 dark:text-gray-400 border-b dark:border-gray-700 pb-1 mb-2">False</h4>
-                                        <ul className="space-y-1 dark:text-gray-300">
+                                        <h4 className="font-semibold text-gray-600 border-b pb-1 mb-2">False</h4>
+                                        <ul className="space-y-1">
                                             {booleanAttributes.false.length > 0 ? booleanAttributes.false.map(name => <li key={name}>{name}</li>) : <li className="text-gray-400">None</li>}
                                         </ul>
                                     </div>
                                 </div>
                                 {otherAttributes.length > 0 && (
-                                    <div className="mt-4 pt-4 border-t dark:border-gray-700">
+                                    <div className="mt-4 pt-4 border-t">
                                         {otherAttributes.map(attr => <InfoItem key={attr.label} label={attr.label} value={attr.value} />)}
                                     </div>
                                 )}
@@ -2658,7 +2638,7 @@ END:VCARD`;
                                     {customer.orders && customer.orders.length > 0 ? (
                                         <table className="w-full text-sm text-left">
                                             <thead>
-                                                <tr className="bg-gray-50 dark:bg-gray-700">
+                                                <tr className="bg-gray-50">
                                                     <th className="p-2">Line Item</th>
                                                     <th className="p-2">Qty</th>
                                                     <th className="p-2">Date</th>
@@ -2667,7 +2647,7 @@ END:VCARD`;
                                             <tbody>
                                                 {customer.orders.flatMap((order) => 
                                                     (order.line_items || []).map((item) => (
-                                                        <tr key={`${order.id}-${item.uid}`} className="border-b dark:border-gray-700">
+                                                        <tr key={`${order.id}-${item.uid}`} className="border-b">
                                                             <td className="p-2">{item.name}</td>
                                                             <td className="p-2">{item.quantity}</td>
                                                             <td className="p-2">{formatSimpleDate(order.closed_at)}</td>
@@ -2677,14 +2657,14 @@ END:VCARD`;
                                             </tbody>
                                         </table>
                                     ) : (
-                                        <p className="text-gray-500 dark:text-gray-400">No orders found for this customer.</p>
+                                        <p className="text-gray-500">No orders found for this customer.</p>
                                     )}
                                 </div>
                             </InfoCard>
                              <InfoCard title="Groups & Segments" className="md:col-span-3">
                                 <div className="flex flex-wrap gap-2">
                                     {(customer.group_ids || []).map(id => <Pill key={id} text={groupsMap.get(id) || id} />)}
-                                    {(customer.segment_ids || []).map(id => <Pill key={id} text={segmentsMap.get(id) || id} color="bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-300" />)}
+                                    {(customer.segment_ids || []).map(id => <Pill key={id} text={segmentsMap.get(id) || id} color="bg-green-100 text-green-800" />)}
                                 </div>
                             </InfoCard>
                         </div>
@@ -2693,16 +2673,16 @@ END:VCARD`;
             );
         }
         
-        const InfoCard = ({ title, children, className }) => (<div className={`bg-white dark:bg-gray-800 p-6 rounded-lg shadow-sm border dark:border-gray-700 ${className || ''}`}><h3 className="text-lg font-semibold text-gray-800 dark:text-gray-200 border-b dark:border-gray-700 pb-2 mb-4">{title}</h3><div className="space-y-3">{children}</div></div>);
-        const InfoItem = ({ label, value }) => (<div><p className="text-sm text-gray-500 dark:text-gray-400">{label}</p><p className="font-medium text-gray-800 dark:text-gray-200">{value || 'N/A'}</p></div>);
-        const Pill = ({ text, color = 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300' }) => (<span className={`px-3 py-1 text-sm font-medium rounded-full ${color}`}>{text}</span>);
+        const InfoCard = ({ title, children, className }) => (<div className={`bg-white p-6 rounded-lg shadow-sm border ${className || ''}`}><h3 className="text-lg font-semibold text-gray-800 border-b pb-2 mb-4">{title}</h3><div className="space-y-3">{children}</div></div>);
+        const InfoItem = ({ label, value }) => (<div><p className="text-sm text-gray-500">{label}</p><p className="font-medium text-gray-800">{value || 'N/A'}</p></div>);
+        const Pill = ({ text, color = 'bg-gray-100 text-gray-800' }) => (<span className={`px-3 py-1 text-sm font-medium rounded-full ${color}`}>{text}</span>);
         const SidebarSection = ({ title, id, children, isOpen, onToggle }) => (
-            <div className="dark:text-gray-300">
+            <div>
                 <button onClick={() => onToggle(id)} className="font-semibold w-full text-left flex justify-between items-center py-2">
                     {title}
                     <span className="transform transition-transform">{isOpen ? '−' : '+'}</span>
                 </button>
-                {isOpen && <div className="mt-2 space-y-2 pl-2 border-l-2 border-gray-200 dark:border-gray-700">{children}</div>}
+                {isOpen && <div className="mt-2 space-y-2 pl-2 border-l-2 border-gray-200">{children}</div>}
             </div>
         );
 
@@ -2719,25 +2699,25 @@ END:VCARD`;
 
             return (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-                    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-lg">
-                        <h3 className="font-bold text-lg dark:text-gray-200">Create Task for {customerName}</h3>
+                    <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-lg">
+                        <h3 className="font-bold text-lg">Create Task for {customerName}</h3>
                         <textarea
                             value={taskText}
                             onChange={(e) => setTaskText(e.target.value)}
-                            className="w-full h-32 mt-4 p-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                            className="w-full h-32 mt-4 p-2 border rounded-md"
                             placeholder="e.g., about the singles night event..."
                         />
                         <div className="mt-4">
-                            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300">Due Date (Optional)</label>
+                            <label className="block text-sm font-medium text-gray-700">Due Date (Optional)</label>
                             <input
                                 type="date"
                                 value={dueDate}
                                 onChange={(e) => setDueDate(e.target.value)}
-                                className="w-full mt-1 px-3 py-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                                className="w-full mt-1 px-3 py-2 border rounded-md"
                             />
                         </div>
                         <div className="flex justify-end space-x-2 mt-4">
-                            <button onClick={onCancel} className="px-4 py-2 bg-gray-200 dark:bg-gray-600 rounded-md">Cancel</button>
+                            <button onClick={onCancel} className="px-4 py-2 bg-gray-200 rounded-md">Cancel</button>
                             <button onClick={handleSave} className="px-4 py-2 bg-cyan-600 text-white rounded-md">Save Task</button>
                         </div>
                     </div>
@@ -2758,16 +2738,16 @@ END:VCARD`;
 
             return (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-40">
-                    <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-lg">
-                        <h3 className="font-bold text-lg dark:text-gray-200">Edit Note for {customer.given_name} {customer.family_name}</h3>
+                    <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-lg">
+                        <h3 className="font-bold text-lg">Edit Note for {customer.given_name} {customer.family_name}</h3>
                         <textarea
                             value={noteText}
                             onChange={(e) => setNoteText(e.target.value)}
-                            className="w-full h-40 mt-4 p-2 border rounded-md dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+                            className="w-full h-40 mt-4 p-2 border rounded-md"
                             placeholder="Enter notes here..."
                         />
                         <div className="flex justify-end space-x-2 mt-4">
-                            <button onClick={onCancel} className="px-4 py-2 bg-gray-200 dark:bg-gray-600 rounded-md">Cancel</button>
+                            <button onClick={onCancel} className="px-4 py-2 bg-gray-200 rounded-md">Cancel</button>
                             <button onClick={handleSave} className="px-4 py-2 bg-cyan-600 text-white rounded-md">Save Note</button>
                         </div>
                     </div>
